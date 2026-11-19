@@ -1,0 +1,702 @@
+[
+  {
+    "id": "amazon-web",
+    "name": "Amazon Music Web",
+    "version": "1.0.0",
+    "kind": "metadata",
+    "description": "music.amazon.com",
+    "services": [
+      "Amazon Music"
+    ],
+    "executable": {
+      "windows-x64": "amazon-web.exe",
+      "windows-arm64": "amazon-web.exe",
+      "linux-x64": "amazon-web",
+      "linux-arm64": "amazon-web",
+      "macos-arm64": "amazon-web",
+      "macos-x64": "amazon-web"
+    },
+    "args": [
+      "{file}",
+      "--url",
+      "{url}"
+    ],
+    "catalog": true,
+    "hosts": [
+      "music.amazon.com",
+      "music.amazon.co.uk",
+      "music.amazon.de",
+      "music.amazon.co.jp"
+    ]
+  },
+  {
+    "id": "betterlyrics",
+    "name": "Better Lyrics",
+    "version": "1.0.0",
+    "kind": "lyrics",
+    "description": "betterlyrics.org",
+    "services": [
+      "Better Lyrics"
+    ],
+    "executable": {
+      "windows-x64": "betterlyrics.exe",
+      "windows-arm64": "betterlyrics.exe",
+      "linux-x64": "betterlyrics",
+      "linux-arm64": "betterlyrics",
+      "macos-arm64": "betterlyrics",
+      "macos-x64": "betterlyrics"
+    },
+    "args": [
+      "{file}"
+    ]
+  },
+  {
+    "id": "cyan-dl",
+    "name": "Cyan",
+    "version": "1.0.0",
+    "description": "cyan-dl.pages.dev",
+    "services": [
+      "Amazon Music"
+    ],
+    "hosts": [
+      "music.amazon.com"
+    ],
+    "executable": {
+      "windows-x64": "cyan-dl.exe",
+      "linux-x64": "cyan-dl",
+      "linux-arm64": "cyan-dl",
+      "macos-arm64": "cyan-dl",
+      "macos-x64": "cyan-dl"
+    },
+    "args": [
+      "{url}",
+      "--output",
+      "{output}"
+    ],
+    "options": [
+      {
+        "key": "quality",
+        "label": "FLAC Quality",
+        "default": "cd",
+        "choices": [
+          {
+            "value": "cd",
+            "label": "CD"
+          },
+          {
+            "value": "best",
+            "label": "Highest Available"
+          }
+        ],
+        "args": [
+          "--quality",
+          "{value}"
+        ]
+      }
+    ],
+    "requires": [
+      "ffmpeg"
+    ]
+  },
+  {
+    "id": "deezer-web",
+    "name": "Deezer Web",
+    "version": "1.0.0",
+    "kind": "metadata",
+    "description": "deezer.com",
+    "services": [
+      "Deezer"
+    ],
+    "executable": {
+      "windows-x64": "deezer-web.exe",
+      "windows-arm64": "deezer-web.exe",
+      "linux-x64": "deezer-web",
+      "linux-arm64": "deezer-web",
+      "macos-arm64": "deezer-web",
+      "macos-x64": "deezer-web"
+    },
+    "args": [
+      "{file}",
+      "--url",
+      "{url}"
+    ],
+    "catalog": true,
+    "hosts": [
+      "deezer.com"
+    ]
+  },
+  {
+    "id": "doubledouble",
+    "name": "DoubleDouble",
+    "version": "1.0.0",
+    "description": "doubledouble.top",
+    "services": [
+      "Amazon Music",
+      "Qobuz",
+      "Tidal",
+      "Deezer"
+    ],
+    "hosts": [
+      "music.amazon.com",
+      "qobuz.com",
+      "tidal.com",
+      "deezer.com"
+    ],
+    "executable": {
+      "windows-x64": "doubledouble.exe",
+      "linux-x64": "doubledouble",
+      "linux-arm64": "doubledouble",
+      "macos-arm64": "doubledouble",
+      "macos-x64": "doubledouble"
+    },
+    "args": [
+      "{url}",
+      "--output",
+      "{output}"
+    ],
+    "options": [
+      {
+        "key": "region",
+        "label": "Server",
+        "default": "us",
+        "choices": [
+          {
+            "value": "us",
+            "label": "USA"
+          },
+          {
+            "value": "eu",
+            "label": "Europe"
+          }
+        ],
+        "args": [
+          "--region",
+          "{value}"
+        ]
+      }
+    ],
+    "status": [
+      "--status"
+    ],
+    "env": {
+      "DOUBLEDOUBLE_HOME": "{data}"
+    },
+    "browser": true,
+    "requires": []
+  },
+  {
+    "id": "flacdownloader",
+    "name": "FlacDownloader",
+    "version": "1.0.0",
+    "description": "flacdownloader.com",
+    "services": [
+      "Qobuz",
+      "Tidal",
+      "Deezer"
+    ],
+    "hosts": [
+      "open.qobuz.com",
+      "play.qobuz.com",
+      "tidal.com",
+      "deezer.com"
+    ],
+    "executable": {
+      "windows-x64": "flacdownloader.exe",
+      "linux-x64": "flacdownloader",
+      "linux-arm64": "flacdownloader",
+      "macos-arm64": "flacdownloader",
+      "macos-x64": "flacdownloader"
+    },
+    "args": [
+      "{url}",
+      "--output",
+      "{output}"
+    ],
+    "env": {
+      "FLACDOWNLOADER_HOME": "{data}"
+    },
+    "browser": true,
+    "requires": []
+  },
+  {
+    "id": "lrc-red",
+    "name": "lrc.red",
+    "version": "1.0.0",
+    "kind": "lyrics",
+    "description": "lrc.red",
+    "services": [
+      "lrc.red"
+    ],
+    "executable": {
+      "windows-x64": "lrc-red.exe",
+      "windows-arm64": "lrc-red.exe",
+      "linux-x64": "lrc-red",
+      "linux-arm64": "lrc-red",
+      "macos-arm64": "lrc-red",
+      "macos-x64": "lrc-red"
+    },
+    "args": [
+      "{file}"
+    ]
+  },
+  {
+    "id": "lrclib",
+    "name": "LRCLIB",
+    "version": "1.0.0",
+    "kind": "lyrics",
+    "description": "lrclib.net",
+    "services": [
+      "LRCLIB"
+    ],
+    "executable": {
+      "windows-x64": "lrclib.exe",
+      "windows-arm64": "lrclib.exe",
+      "linux-x64": "lrclib",
+      "linux-arm64": "lrclib",
+      "macos-arm64": "lrclib",
+      "macos-x64": "lrclib"
+    },
+    "args": [
+      "{file}"
+    ],
+    "options": [
+      {
+        "key": "lyrics-format",
+        "label": "Lyrics Format",
+        "default": "allow-plain",
+        "choices": [
+          {
+            "value": "allow-plain",
+            "label": "Synced or Plain Text"
+          },
+          {
+            "value": "synced-only",
+            "label": "Synced Only"
+          }
+        ],
+        "args": [
+          "--lyrics-format",
+          "{value}"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "lucida",
+    "name": "Lucida",
+    "version": "1.0.0",
+    "description": "lucida.to",
+    "services": [
+      "Amazon Music",
+      "Qobuz",
+      "Tidal",
+      "Deezer",
+      "Yandex Music"
+    ],
+    "hosts": [
+      "music.amazon.com",
+      "qobuz.com",
+      "tidal.com",
+      "deezer.com",
+      "music.yandex.ru",
+      "music.yandex.com"
+    ],
+    "executable": {
+      "windows-x64": "lucida.exe",
+      "linux-x64": "lucida",
+      "linux-arm64": "lucida",
+      "macos-arm64": "lucida",
+      "macos-x64": "lucida"
+    },
+    "args": [
+      "{url}",
+      "--output",
+      "{output}"
+    ],
+    "status": [
+      "--status"
+    ],
+    "env": {
+      "LUCIDA_HOME": "{data}"
+    },
+    "browser": true,
+    "requires": []
+  },
+  {
+    "id": "lyricsplus",
+    "name": "LyricsPlus",
+    "version": "1.0.0",
+    "kind": "lyrics",
+    "description": "lyricsplus.binimum.org",
+    "services": [
+      "LyricsPlus"
+    ],
+    "executable": {
+      "windows-x64": "lyricsplus.exe",
+      "windows-arm64": "lyricsplus.exe",
+      "linux-x64": "lyricsplus",
+      "linux-arm64": "lyricsplus",
+      "macos-arm64": "lyricsplus",
+      "macos-x64": "lyricsplus"
+    },
+    "args": [
+      "{file}"
+    ],
+    "options": [
+      {
+        "key": "lyrics-format",
+        "label": "Lyrics Format",
+        "default": "allow-plain",
+        "choices": [
+          {
+            "value": "allow-plain",
+            "label": "Synced or Plain Text"
+          },
+          {
+            "value": "synced-only",
+            "label": "Synced Only"
+          }
+        ],
+        "args": [
+          "--lyrics-format",
+          "{value}"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "monochrome",
+    "name": "Monochrome",
+    "version": "1.0.0",
+    "kind": "downloader",
+    "description": "monochrome.st",
+    "services": [
+      "Tidal"
+    ],
+    "hosts": [
+      "monochrome.st"
+    ],
+    "executable": {
+      "windows-x64": "monochrome.exe",
+      "windows-arm64": "monochrome.exe",
+      "linux-x64": "monochrome",
+      "linux-arm64": "monochrome",
+      "macos-arm64": "monochrome",
+      "macos-x64": "monochrome"
+    },
+    "args": [
+      "{url}",
+      "--output",
+      "{output}"
+    ],
+    "browser": true
+  },
+  {
+    "id": "musicbrainz",
+    "name": "MusicBrainz",
+    "version": "1.0.0",
+    "kind": "metadata",
+    "description": "musicbrainz.org",
+    "services": [
+      "MusicBrainz"
+    ],
+    "executable": {
+      "windows-x64": "musicbrainz.exe",
+      "windows-arm64": "musicbrainz.exe",
+      "linux-x64": "musicbrainz",
+      "linux-arm64": "musicbrainz",
+      "macos-arm64": "musicbrainz",
+      "macos-x64": "musicbrainz"
+    },
+    "args": [
+      "{file}"
+    ]
+  },
+  {
+    "id": "musixmatch",
+    "name": "Musixmatch",
+    "version": "1.0.0",
+    "kind": "lyrics",
+    "description": "musixmatch.com",
+    "services": [
+      "Musixmatch"
+    ],
+    "executable": {
+      "windows-x64": "musixmatch.exe",
+      "windows-arm64": "musixmatch.exe",
+      "linux-x64": "musixmatch",
+      "linux-arm64": "musixmatch",
+      "macos-arm64": "musixmatch",
+      "macos-x64": "musixmatch"
+    },
+    "args": [
+      "{file}"
+    ],
+    "status": [
+      "--status"
+    ],
+    "options": [
+      {
+        "key": "lyrics-format",
+        "label": "Lyrics Format",
+        "default": "allow-plain",
+        "choices": [
+          {
+            "value": "allow-plain",
+            "label": "Synced or Plain Text"
+          },
+          {
+            "value": "synced-only",
+            "label": "Synced Only"
+          }
+        ],
+        "args": [
+          "--lyrics-format",
+          "{value}"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "odesli",
+    "name": "Odesli",
+    "version": "1.0.0",
+    "kind": "resolver",
+    "description": "odesli.co",
+    "services": [
+      "Spotify",
+      "Apple Music",
+      "YouTube Music",
+      "Tidal",
+      "Deezer",
+      "Amazon Music"
+    ],
+    "hosts": [
+      "open.spotify.com",
+      "spotify.link",
+      "music.apple.com",
+      "itunes.apple.com",
+      "geo.music.apple.com",
+      "youtube.com",
+      "youtu.be",
+      "pandora.com",
+      "audius.co",
+      "anghami.com",
+      "boomplay.com",
+      "audiomack.com",
+      "napster.com",
+      "tidal.com",
+      "deezer.com",
+      "deezer.page.link",
+      "music.amazon.com",
+      "music.yandex.ru",
+      "music.yandex.com",
+      "song.link",
+      "odesli.co",
+      "album.link"
+    ],
+    "executable": {
+      "windows-x64": "odesli.exe",
+      "linux-x64": "odesli",
+      "linux-arm64": "odesli",
+      "macos-arm64": "odesli",
+      "macos-x64": "odesli"
+    },
+    "args": [
+      "{url}"
+    ],
+    "requires": []
+  },
+  {
+    "id": "odskyler",
+    "name": "Rhythmax",
+    "version": "1.0.0",
+    "description": "tidal.odskyler.com",
+    "services": [
+      "Tidal"
+    ],
+    "hosts": [
+      "tidal.com"
+    ],
+    "executable": {
+      "windows-x64": "odskyler.exe",
+      "linux-x64": "odskyler",
+      "linux-arm64": "odskyler",
+      "macos-arm64": "odskyler",
+      "macos-x64": "odskyler"
+    },
+    "args": [
+      "{url}",
+      "--output",
+      "{output}"
+    ],
+    "options": [
+      {
+        "key": "quality",
+        "label": "Quality",
+        "default": "lossless",
+        "choices": [
+          {
+            "value": "lossless",
+            "label": "Lossless 16-bit"
+          },
+          {
+            "value": "hires",
+            "label": "Hi-Res 24-bit"
+          }
+        ],
+        "args": [
+          "--quality",
+          "{value}"
+        ]
+      },
+      {
+        "key": "fallback",
+        "label": "Hi-Res Fallback",
+        "default": "off",
+        "choices": [
+          {
+            "value": "off",
+            "label": "Off"
+          },
+          {
+            "value": "cd",
+            "label": "Allow CD FLAC"
+          }
+        ],
+        "args": [
+          "--fallback",
+          "{value}"
+        ]
+      }
+    ],
+    "requires": [
+      "ffmpeg"
+    ]
+  },
+  {
+    "id": "qobuz-web",
+    "name": "Qobuz Web",
+    "version": "1.0.0",
+    "kind": "metadata",
+    "description": "qobuz.com",
+    "services": [
+      "Qobuz"
+    ],
+    "executable": {
+      "windows-x64": "qobuz-web.exe",
+      "windows-arm64": "qobuz-web.exe",
+      "linux-x64": "qobuz-web",
+      "linux-arm64": "qobuz-web",
+      "macos-arm64": "qobuz-web",
+      "macos-x64": "qobuz-web"
+    },
+    "args": [
+      "{file}",
+      "--url",
+      "{url}"
+    ],
+    "catalog": true,
+    "hosts": [
+      "qobuz.com"
+    ]
+  },
+  {
+    "id": "spotify-web",
+    "name": "Spotify Web",
+    "version": "1.0.0",
+    "kind": "metadata",
+    "description": "open.spotify.com",
+    "services": [
+      "Spotify"
+    ],
+    "executable": {
+      "windows-x64": "spotify-web.exe",
+      "windows-arm64": "spotify-web.exe",
+      "linux-x64": "spotify-web",
+      "linux-arm64": "spotify-web",
+      "macos-arm64": "spotify-web",
+      "macos-x64": "spotify-web"
+    },
+    "args": [
+      "{file}",
+      "--url",
+      "{url}"
+    ],
+    "catalog": true,
+    "status": [
+      "--status"
+    ],
+    "hosts": [
+      "open.spotify.com"
+    ]
+  },
+  {
+    "id": "squigly",
+    "name": "Squigly",
+    "version": "1.0.0",
+    "kind": "resolver",
+    "description": "squigly.link",
+    "services": [
+      "Spotify",
+      "Apple Music",
+      "YouTube Music",
+      "Tidal",
+      "Deezer",
+      "Amazon Music"
+    ],
+    "hosts": [
+      "open.spotify.com",
+      "spotify.link",
+      "music.apple.com",
+      "itunes.apple.com",
+      "geo.music.apple.com",
+      "youtube.com",
+      "youtu.be",
+      "tidal.com",
+      "deezer.com",
+      "deezer.page.link",
+      "music.amazon.com",
+      "bandcamp.com",
+      "squigly.link"
+    ],
+    "executable": {
+      "windows-x64": "squigly.exe",
+      "linux-x64": "squigly",
+      "linux-arm64": "squigly",
+      "macos-arm64": "squigly",
+      "macos-x64": "squigly"
+    },
+    "args": [
+      "{url}"
+    ],
+    "requires": []
+  },
+  {
+    "id": "tidal-web",
+    "name": "Tidal Web",
+    "version": "1.0.0",
+    "kind": "metadata",
+    "description": "tidal.com",
+    "services": [
+      "Tidal"
+    ],
+    "executable": {
+      "windows-x64": "tidal-web.exe",
+      "windows-arm64": "tidal-web.exe",
+      "linux-x64": "tidal-web",
+      "linux-arm64": "tidal-web",
+      "macos-arm64": "tidal-web",
+      "macos-x64": "tidal-web"
+    },
+    "args": [
+      "{file}",
+      "--url",
+      "{url}"
+    ],
+    "catalog": true,
+    "hosts": [
+      "tidal.com"
+    ]
+  }
+]

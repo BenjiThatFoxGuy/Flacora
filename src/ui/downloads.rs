@@ -1,0 +1,557 @@
+//! Downloads: the link box with its route, then the queue.
+
+use super::widgets::{self, badge, card, cover, section, service_chip, status_badge, title_case_label};
+use crate::app::{App, ConfirmAction, Page, RESOLVER_KEY};
+use crate::{icons, store};
+use crate::jobs::{Job, Status};
+use rune::{El, LoopSpec, ScrollSpec, Transition, Tx, col, el, icon, row, text};
+use rune_kit::{Button, ButtonVariant, ControlSize, Kit, ScrollBar, SegmentedControl, Spinner, TextInput};
+
+pub fn page(s: &App, k: &Kit) -> El {
+    let active = s.active_jobs();
+    let failed_count = s.jobs.iter().filter(|j| matches!(j.status, Status::Failed(_))).count();
+    let cancelled_count = s.jobs.iter().filter(|j| matches!(j.status, Status::Cancelled)).count();
+    let finished = s.jobs.iter().filter(|j| j.is_finished()).count();
+    let mut actions = Vec::new();
+    if active > 1 {
+        let confirming = s.confirm_action == Some(ConfirmAction::CancelAll);
+        let (label, variant) = if confirming {
+            ("Confirm Cancel All", ButtonVariant::Danger)
+        } else {
+            ("Cancel All", ButtonVariant::Outline)
+        };
+        actions.push(widgets::button(k, "cancel-all", label, Some(&icons::SQUARE), variant, move |s: &mut App| {
+            if confirming {
+                s.confirm_action = None;
+                s.cancel_all_jobs();
+            } else {
+                s.confirm_action = Some(ConfirmAction::CancelAll);
+            }
+        }));
+    }
+    if failed_count > 0 || cancelled_count > 0 {
+        let label = match (failed_count > 0, cancelled_count > 0) {
+            (true, true) => "Retry Failed & Cancelled",
+            (true, false) => "Retry Failed",
+            (false, true) => "Retry Cancelled",
+            (false, false) => unreachable!(),
+        };
+        actions.push(widgets::button(k, "retry-failed", label, Some(&icons::REFRESH_CW), ButtonVariant::Outline, |s: &mut App| {
+            s.retry_failed_jobs()
+        }));
+    }
+    if failed_count > 0 {
+        actions.push(
+            Button::new("Copy Failed")
+                .icon(&icons::COPY)
+                .variant(ButtonVariant::Outline)
+                .control_size(ControlSize::Regular)
+                .help("Copy failed links to clipboard")
+                .on_press_tx(|s: &mut App, tx: &mut Tx| {
+                    let urls = s.failed_urls();
+                    if !urls.is_empty() {
+                        let count = urls.len();
+                        tx.copy(urls.join("\n"));
+                        s.success(format!("Copied {count} failed link{}", if count == 1 { "" } else { "s" }));
+                    }
+                })
+                .build(k)
+                .h(32.0)
+                .key("copy-failed"),
+        );
+    }
+    if finished > 0 {
+        actions.push(widgets::button(k, "clear-finished", "Clear Finished", Some(&icons::X), ButtonVariant::Danger, |s: &mut App| {
+            s.clear_finished()
+        }));
+    }
+    let head = widgets::page_header(k, "Downloads", "Paste links from your music services. They download one after another.", actions);
+    let body = if s.jobs.is_empty() { empty(s, k) } else { queue(s, k) };
+    let mut page = widgets::page("downloads-page").child(head);
+    if !s.loaded || !s.installed.is_empty() || !s.jobs.is_empty() {
+        page = page.child(composer(s, k));
+    }
+    page.child(body)
+}
+
+/// Valid URLs currently in the link box.
+fn pasted_links(s: &App) -> Vec<&str> {
+    s.url.text.split_whitespace().filter(|w| crate::extensions::url_host(w).is_some()).collect()
+}
+
+fn duplicate_count(s: &App, links: &[&str]) -> usize {
+    links
+        .iter()
+        .filter(|url| {
+            s.history.iter().any(|entry| {
+                entry.url == **url
+                    && entry.main_file().and_then(|f| s.library_files.get(f)).is_none_or(|info| info.exists)
+            })
+        })
+        .count()
+}
+
+/// The link box, its route and the destination.
+fn composer(s: &App, k: &Kit) -> El {
+    let links = pasted_links(s);
+    let service = s.service();
+    let collection = links.len() == 1 && crate::catalog::is_catalog_url(links[0]);
+    let mut field = TextInput::new(&s.url)
+        .placeholder("Paste Track or Collection Links…")
+        .leading_icon(&icons::LINK)
+        .large()
+        .height(36.0)
+        .on_edit(|s: &mut App| &mut s.url)
+        .on_submit(|s: &mut App, _: &mut Tx| s.enqueue());
+    if !s.url.text.is_empty() {
+        field = field.clear_button();
+    }
+    if links.len() > 1 {
+        field = field.trailing(badge(k, format!("{} Links", links.len())).key("batch-summary"));
+    } else if let Some(service) = service {
+        field = field.trailing(service_chip(k, Some(service), service.name));
+    }
+    let can_add = s.importing == 0 && (collection || s.selected().is_some() || s.resolver().is_some() || links.len() > 1);
+    let (label, glyph) = if collection {
+        ("Browse".to_owned(), &icons::SEARCH)
+    } else if links.len() > 1 {
+        (format!("Download ({})", links.len()), &icons::DOWNLOAD)
+    } else {
+        ("Download".to_owned(), &icons::DOWNLOAD)
+    };
+    let add = Button::new(label)
+        .icon(glyph)
+        .variant(ButtonVariant::Submit)
+        .control_size(ControlSize::ExtraLarge)
+        .disabled(!can_add)
+        .on_press(|s: &mut App| s.enqueue())
+        .build(k)
+        .key("download");
+    let input = row().key("link").w_full().gap(10.0).center_y().child(field.build(k).key("url").grow(1.0)).child(add);
+
+    let path = s.settings.output.to_string_lossy().into_owned();
+    let destination = Button::new(path.clone())
+        .variant(ButtonVariant::GhostMuted)
+        .control_size(ControlSize::Small)
+        .icon(&icons::FOLDER)
+        .label_with(move |font, ink| text(path).font(font).color(ink).truncate().shrink())
+        .help("Change the Download Folder in Settings")
+        .on_press(|s: &mut App| s.page = Page::Settings)
+        .build(k)
+        .key("destination")
+        .max_w(300.0)
+        .shrink()
+        .min_w(0.0);
+    let body = col()
+        .gap(12.0)
+        .child(input)
+        .child(row().w_full().gap(16.0).center_y().child(route(s, k)).child(destination));
+    card(k, "composer", body)
+}
+
+/// Which extension takes the link, and its options.
+fn route(s: &App, k: &Kit) -> El {
+    let muted = |t: &str| text(t.to_owned()).font(k.ty.small).color(k.c.text_muted).truncate().shrink();
+    let line = row().key("route").min_h(30.0).gap(10.0).center_y().flex_wrap().grow(1.0).shrink().min_w(0.0);
+    if !s.loaded {
+        return line.child(Spinner::new().size(14.0).build(k)).child(muted("Loading Extensions…"));
+    }
+    if crate::catalog::is_catalog_url(s.url.text.trim()) {
+        return line.child(muted("Open this music page and select individual tracks in Catalog."));
+    }
+    let Some(host) = s.host() else {
+        return line.child(
+            text(direct_services_hint(s))
+                .font(k.ty.small)
+                .color(k.c.text_muted)
+                .wrap()
+                .shrink(),
+        );
+    };
+    if s.selected().is_none()
+        && let Some(resolver) = s.resolver()
+    {
+        let resolvers = s.resolvers();
+        let line = line.child(muted("Using"));
+        let line = if resolvers.len() > 1 {
+            let names: Vec<String> = resolvers.iter().map(|i| i.manifest.name.clone()).collect();
+            let ids: Vec<String> = resolvers.iter().map(|i| i.manifest.id.clone()).collect();
+            let current = ids.iter().position(|id| *id == resolver.manifest.id);
+            line.child(
+                widgets::segmented(k, "resolver-pick", SegmentedControl::new(&names, current)
+                    .on_pick(move |s: &mut App, i: usize, _: &mut Tx| s.set_preferred(RESOLVER_KEY, ids.get(i).cloned()))),
+            )
+        } else {
+            line.child(badge(k, &resolver.manifest.name).key("resolver"))
+        };
+        return line
+            .child(icon(&icons::ARROW_RIGHT, 13.0).color(k.c.icon_faint))
+            .child(text("finds it on a service you can download from").font(k.ty.small).color(k.c.text_muted).wrap().shrink());
+    }
+    let Some(selected) = s.selected() else {
+        return line
+            .child(icon(&icons::TRIANGLE_ALERT, 15.0).color(k.c.warning.fg))
+            .child(text(format!("No installed extension handles {host}")).font(k.ty.small_medium).color(k.c.warning.fg).wrap().shrink())
+            .child(widgets::button(k, "open-extensions", "Go to Extensions", None, ButtonVariant::Ghost, |s: &mut App| {
+                s.page = Page::Extensions
+            }));
+    };
+
+    let mut line = line.child(muted("Using"));
+    let candidates = s.candidates();
+    if candidates.len() > 1 {
+        let names: Vec<String> = candidates.iter().map(|i| i.manifest.name.clone()).collect();
+        let ids: Vec<String> = candidates.iter().map(|i| i.manifest.id.clone()).collect();
+        let current = ids.iter().position(|id| *id == selected.manifest.id);
+        let key = App::service_key(&host);
+        line = line.child(
+            widgets::segmented(k, "extension-pick", SegmentedControl::new(&names, current)
+                .on_pick(move |s: &mut App, i: usize, _: &mut Tx| s.set_preferred(&key, ids.get(i).cloned()))),
+        );
+    } else {
+        line = line.child(badge(k, &selected.manifest.name).key("extension"));
+    }
+    for option in &selected.manifest.options {
+        line = line.child(muted(&title_case_label(&option.label))).child(
+            widgets::extension_option(k, s, &selected.manifest.id, option, &format!("option-{}", option.key)),
+        );
+    }
+    if !store::CAN_DOWNLOAD_FFMPEG && selected.manifest.requires.iter().any(|r| r == "ffmpeg") && s.tools.as_ref().is_some_and(|t| t.ffmpeg.is_none()) {
+        line = line
+            .child(icon(&icons::TRIANGLE_ALERT, 14.0).color(k.c.warning.fg))
+            .child(text("Needs FFmpeg").font(k.ty.small).color(k.c.warning.fg));
+    }
+    let links = pasted_links(s);
+    let dups = duplicate_count(s, &links);
+    if dups > 0 {
+        let label = if links.len() == 1 { "In Library".to_owned() } else { format!("{dups} in Library") };
+        line = line.child(
+            status_badge(k, &icons::CIRCLE_CHECK, &label, Some(k.c.info))
+                .key("duplicate-hint")
+                .help("Already in Library. Click Download to download again."),
+        );
+    }
+    line
+}
+
+fn direct_services_hint(s: &App) -> String {
+    let direct: Vec<&str> = crate::services::SERVICES[..crate::services::LOSSLESS]
+        .iter()
+        .filter(|service| !s.installed_downloaders_for(service.primary_host()).is_empty())
+        .map(|service| service.name)
+        .collect();
+    let has_resolver = s.installed.iter().any(|i| i.manifest.kind == crate::extensions::Kind::Resolver);
+    let direct_part = match direct.as_slice() {
+        [] => "Install a downloader extension for direct lossless downloads.".to_owned(),
+        [only] => format!("{only} links download directly."),
+        [head @ .., last] => format!("{} and {last} links download directly.", head.join(", ")),
+    };
+    if has_resolver {
+        format!("{direct_part} Spotify, Apple Music and YouTube use a link resolver.")
+    } else {
+        direct_part
+    }
+}
+
+fn empty(s: &App, k: &Kit) -> El {
+    let (title, body) = if s.installed.is_empty() && s.loaded {
+        (
+            "Install an Extension to Start",
+            format!("Drop a .{} package into the window. Installed extensions appear on the Extensions page.", store::PACKAGE),
+        )
+    } else {
+        ("Nothing in the Queue", "Paste a link above and press Enter. Several links at once are queued in order.".to_owned())
+    };
+    let action = (s.installed.is_empty() && s.loaded).then(|| {
+        widgets::button(k, "go-extensions", "Go to Extensions", Some(&icons::PUZZLE), ButtonVariant::Submit, |s: &mut App| {
+            s.page = Page::Extensions
+        })
+    });
+    widgets::empty_state(k, "queue-empty", &icons::LIST_MUSIC, title, &body, action)
+}
+
+fn queue(s: &App, k: &Kit) -> El {
+    let active = s.active_jobs();
+    let queued_count = s.jobs.iter().filter(|j| j.status == Status::Queued).count();
+    let finished = s.jobs.len() - active;
+    let mut summary = Vec::new();
+    if active > 0 {
+        summary.push(format!("{active} Active"));
+    }
+    if finished > 0 {
+        summary.push(format!("{finished} Finished"));
+    }
+    let mut queue_left = rune::row()
+        .gap(8.0)
+        .center_y()
+        .grow(1.0)
+        .child(section(k, "Queue", None))
+        .child(text(summary.join(" · ")).font(k.ty.text_xsmall).color(k.c.text_faint));
+    if s.queue_paused {
+        queue_left = queue_left.child(
+            status_badge(k, &icons::PAUSE, "Paused", Some(k.c.warning)).key("queue-paused-badge"),
+        );
+    }
+    let mut queue_head = rune::row().w_full().gap(8.0).center_y().child(queue_left);
+    if queued_count > 0 || (s.queue_paused && active > 0) {
+        let (label, glyph, variant) = if s.queue_paused {
+            ("Resume Queue", &icons::PLAY, ButtonVariant::Submit)
+        } else {
+            ("Pause Queue", &icons::PAUSE, ButtonVariant::Outline)
+        };
+        queue_head = queue_head.child(
+            Button::new(label)
+                .icon(glyph)
+                .variant(variant)
+                .control_size(ControlSize::Small)
+                .help(if s.queue_paused { "Resume starting queued downloads" } else { "Pause starting the next queued download" })
+                .on_press(|s: &mut App| s.toggle_queue_pause())
+                .build(k)
+                .key("toggle-pause"),
+        );
+    }
+    let mut list = col().key("queue").gap(10.0);
+    list = list.child(queue_head);
+    for job in &s.jobs {
+        list = list.child(job_card(s, k, job));
+    }
+    widgets::page_scroll(k, list)
+}
+
+fn job_card(s: &App, k: &Kit, job: &Job) -> El {
+    let id = job.id;
+    let title = job.title.clone().unwrap_or_else(|| job.url.clone());
+    let mut subtitle: Vec<String> = Vec::new();
+    if let Some(artist) = &job.artist {
+        subtitle.push(artist.clone());
+    }
+    if let Some(album) = &job.album {
+        subtitle.push(album.clone());
+    }
+    let mut meta = row().gap(8.0).center_y().flex_wrap();
+    // A resolved link shows where it came from: "Spotify → Tidal".
+    if let Some((_, from)) = &job.resolved {
+        meta = meta.child(service_chip(k, *from, "Link")).child(icon(&icons::ARROW_RIGHT, 12.0).color(k.c.icon_faint));
+    }
+    if job.lookup_file.is_some() {
+        let manifest = &job.extension.manifest;
+        let url = crate::extensions::site_url(&manifest.description);
+        meta = meta.child(widgets::badge(k, manifest.kind.label()));
+        if let Some(url) = url {
+            let tip = format!("Open {}", manifest.description.trim());
+            meta = meta.child(
+                Button::new(manifest.name.clone())
+                    .icon(&icons::SQUARE_ARROW_UP_RIGHT)
+                    .variant(ButtonVariant::GhostMuted)
+                    .control_size(ControlSize::Small)
+                    .help(tip)
+                    .on_press_tx(move |s: &mut App, tx| {
+                        if let Err(error) = tx.open_url(&url) {
+                            s.error(format!("Could not open website: {error}"));
+                        }
+                    })
+                    .build(k)
+                    .key(format!("lookup-source-{id}")),
+            );
+        } else {
+            meta = meta.child(text(manifest.name.clone()).font(k.ty.text_xsmall).color(k.c.text_faint));
+        }
+    } else {
+        meta = meta.child(service_chip(k, job.service, "Link"));
+        let by = match &job.resolved {
+            Some((resolver, _)) => format!("{resolver} · {}", job.extension.manifest.name),
+            None => job.extension.manifest.name.clone(),
+        };
+        meta = meta.child(text(by).font(k.ty.text_xsmall).color(k.c.text_faint).truncate());
+    }
+    if let Some(quality) = &job.quality {
+        meta = meta.child(badge(k, quality));
+    }
+    let mut info = col()
+        .gap(4.0)
+        .grow(1.0)
+        .shrink()
+        .min_w(0.0)
+        .child(text(title).font(k.ty.body_medium).color(k.c.text_strong).truncate());
+    if !subtitle.is_empty() {
+        info = info.child(text(subtitle.join(" · ")).font(k.ty.small).color(k.c.text_muted).truncate());
+    }
+    info = info.child(meta);
+
+    let head = row()
+        .w_full()
+        .gap(14.0)
+        .center_y()
+        .child(cover(k, s.image(job.cover.as_deref()), 56.0))
+        .child(info)
+        .child(status(k, job))
+        .child(actions(k, job));
+    let mut body = col().gap(12.0).child(head);
+    if job.is_running() {
+        body = body.child(download_progress(k, job));
+    }
+    if job.status == Status::Choosing {
+        body = body.child(choices(s, k, job));
+    }
+    if let Status::Failed(reason) = &job.status {
+        body = body.child(
+            row()
+                .gap(8.0)
+                .center_y()
+                .padding(8.0)
+                .radius(k.radius.xs)
+                .fill(k.c.danger.bg)
+                .child(icon(&icons::TRIANGLE_ALERT, 14.0).color(k.c.danger.fg))
+                .child(text(reason.clone()).font(k.ty.small).color(k.c.danger.fg).wrap().shrink()),
+        );
+    }
+    if job.show_log && !job.log.is_empty() {
+        body = body.child(log(k, job));
+    }
+    card(k, format!("job-{id}"), body)
+}
+
+fn download_progress(k: &Kit, job: &Job) -> El {
+    const HEIGHT: f32 = 8.0;
+    const RADIUS: f32 = HEIGHT / 2.0;
+
+    let label = job.stage.as_deref().map_or_else(|| "Working".into(), title_case_label);
+    let mut progress = col().key(format!("progress-{}", job.id)).role("progressbar").label(label.clone()).w_full().gap(4.0);
+    let mut header = row().center_y().justify_between()
+        .child(text(label).font(k.ty.text_small).color(k.c.std_text));
+    let fill = el().h_full().radius(RADIUS).fill(k.c.border_active).transition(Transition::none());
+    let fill = match job.progress {
+        Some(value) => {
+            let value = value.clamp(0.0, 1.0);
+            let percent = format!("{}%", (value * 100.0).round());
+            progress = progress.range_value((f64::from(value) * 1e4).round() / 1e4, 0.0, 1.0).a11y_value(percent.clone());
+            header = header.child(text(percent).font(k.ty.text_small).color(k.c.text_weak));
+            fill.key("fill").w_frac(value)
+        }
+        None => fill.key("moving-fill").w_frac(0.25).looping(LoopSpec::slide(1.4, [-1.0, 0.0], [4.0, 0.0])),
+    };
+    let track = row().key("track").w_full().h(HEIGHT).radius(RADIUS).clip_rounded(RADIUS)
+        .fill(k.c.surface_base).border(1.0, k.c.border_weak).child(fill);
+    progress.child(header.a11y_hidden()).child(track.a11y_hidden())
+}
+
+/// One button per service the resolver found.
+fn choices(s: &App, k: &Kit, job: &Job) -> El {
+    let id = job.id;
+    let resolver = job.extension.manifest.name.clone();
+    let mut buttons = row().key(format!("choices-{id}")).gap(8.0).center_y().flex_wrap();
+    for (i, choice) in job.choices.iter().enumerate() {
+        let label = format!("{} via {}", choice.service.name, choice.downloader_name);
+        let logo = widgets::provider_logo(s, choice.service, 14.0);
+        let mut button = Button::new(label.clone())
+            .variant(ButtonVariant::Neutral)
+            .control_size(ControlSize::Regular)
+            .help(format!("Download from {} with {}", choice.service.name, choice.downloader_name))
+            .on_press(move |s: &mut App| s.choose(id, i));
+        if let Some(logo) = logo {
+            button = button.label_with(move |font, ink| {
+                row().gap(6.0).center_y().child(logo.a11y_hidden()).child(text(label).font(font).color(ink))
+            });
+        } else {
+            button = button.icon(&icons::DOWNLOAD);
+        }
+        buttons = buttons.child(button.build(k).h(28.0).key(format!("choose-{id}-{i}")));
+    }
+    // Services the track is also on, besides the offered ones and the one the link came from.
+    let mut skip: Vec<&str> = job.choices.iter().map(|c| c.service.name).collect();
+    skip.extend(job.service.map(|s| s.name));
+    let others: Vec<&str> = job.links.iter().map(|(service, _)| service.as_str()).filter(|s| !skip.contains(s)).collect();
+    let mut panel = col()
+        .key(format!("choices-panel-{id}"))
+        .w_full()
+        .gap(8.0)
+        .padding(12.0)
+        .radius(k.radius.md)
+        .fill(k.c.bg_deep)
+        .border(1.0, k.c.border_base)
+        .child(
+            row()
+                .gap(8.0)
+                .center_y()
+                .child(icon(&icons::LINK, 14.0).color(k.c.text_accent))
+                .child(text(format!("{resolver} found this track. Download it from:")).font(k.ty.small_medium).color(k.c.text_strong).wrap().shrink()),
+        )
+        .child(buttons);
+    if !others.is_empty() {
+        panel = panel.child(
+            text(format!("Also on {} (no installed extension downloads from there)", others.join(", ")))
+                .font(k.ty.text_xsmall)
+                .color(k.c.text_faint)
+                .wrap(),
+        );
+    }
+    panel
+}
+
+fn status(k: &Kit, job: &Job) -> El {
+    let (glyph, label, colors) = match &job.status {
+        Status::Queued => (&icons::CLOCK, "Waiting", None),
+        Status::Choosing => (&icons::CHEVRONS_UP_DOWN, "Choose a Service", Some(k.c.info)),
+        Status::Running => return row().gap(6.0).center_y().child(Spinner::new().size(14.0).build(k)),
+        Status::Done => (&icons::CIRCLE_CHECK, "Saved", Some(k.c.success)),
+        Status::Failed(_) => (&icons::TRIANGLE_ALERT, "Failed", Some(k.c.danger)),
+        Status::Cancelled => (&icons::CIRCLE_X, "Cancelled", None),
+    };
+    status_badge(k, glyph, label, colors).key(format!("status-{}", job.id))
+}
+
+fn actions(k: &Kit, job: &Job) -> El {
+    let id = job.id;
+    let mut actions = row().gap(2.0).center_y();
+    match &job.status {
+        Status::Done => {
+            if let Some(file) = job.main_file() {
+                let (play, reveal) = (file.to_owned(), file.to_owned());
+                let (glyph, label) = if job.lookup_file.is_some() { (&icons::SQUARE_ARROW_UP_RIGHT, "Open File") } else { (&icons::PLAY, "Play") };
+                actions = actions
+                    .child(widgets::icon_button(k, &format!("play-{id}"), glyph, label, move |s: &mut App| s.open(&play)))
+                    .child(widgets::icon_button(k, &format!("reveal-{id}"), &icons::FOLDER, "Show in Folder", move |s: &mut App| {
+                        s.reveal(&reveal)
+                    }));
+            }
+        }
+        Status::Failed(_) | Status::Cancelled => {
+            actions = actions.child(widgets::icon_button(k, &format!("retry-{id}"), &icons::REFRESH_CW, "Try Again", move |s: &mut App| {
+                s.retry_job(id)
+            }));
+        }
+        Status::Queued | Status::Running | Status::Choosing => {
+            let (glyph, label) = if job.status == Status::Choosing { (&icons::X, "Skip This Track") } else { (&icons::SQUARE, "Cancel") };
+            actions = actions.child(widgets::danger_icon_button(k, &format!("cancel-{id}"), glyph, label, move |s: &mut App| s.cancel_job(id))
+                .disabled(job.is_running() && job.handle.is_none()));
+        }
+    }
+    if !job.log.is_empty() {
+        let glyph = if job.show_log { &icons::CHEVRON_DOWN } else { &icons::CHEVRON_RIGHT };
+        actions = actions.child(widgets::icon_button(k, &format!("log-{id}"), glyph, "Details", move |s: &mut App| s.toggle_log(id)));
+    }
+    if job.is_finished() {
+        actions = actions.child(widgets::danger_icon_button(k, &format!("remove-{id}"), &icons::X, "Remove from List", move |s: &mut App| {
+            s.remove_job(id)
+        }));
+    }
+    actions
+}
+
+fn log(k: &Kit, job: &Job) -> El {
+    let mut lines = col().w_full().px(12.0).py(10.0).gap(2.0);
+    for line in &job.log {
+        let colour = if line.starts_with("Error:") { k.c.danger.fg } else { k.c.text_muted };
+        lines = lines.child(text(line.clone()).font(k.ty.mono).color(colour).wrap());
+    }
+    let viewport = lines.key(format!("log-scroll-{}", job.id))
+        .scroll(ScrollSpec { stick_bottom: true }).max_h(180.0)
+        .scroll_bar_styled(widgets::scroll_bar_style(k));
+    el().key(format!("log-view-{}", job.id))
+        .w_full()
+        .max_h(180.0)
+        .radius(k.radius.xs)
+        .fill(k.c.bg_deep)
+        .border(1.0, k.c.border_base)
+        .child(viewport)
+}

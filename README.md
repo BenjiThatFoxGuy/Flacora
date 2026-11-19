@@ -1,3 +1,16 @@
-# Flacora
+<img alt="Flacora logo" width="128" src="assets/appicon.png" align="left">
 
-Download tracks in true FLAC from Tidal, Qobuz, Amazon Music & Deezer — no account required.
+### `Flacora`<br><sub><sup>Download tracks in true FLAC from Tidal, Qobuz, Amazon Music & Deezer — no account required.</sup></sub>
+
+[![Stars](https://img.shields.io/github/stars/spotbye/Flacora?color=ffcb47&labelColor=black&logo=github&label=Stars)](https://github.com/spotbye/Flacora/stargazers)
+[![Downloads](https://img.shields.io/github/downloads/spotbye/Flacora/total?color=22c55e&labelColor=black&logo=github&label=Downloads)](https://github.com/spotbye/Flacora/releases)
+[![Release](https://img.shields.io/github/v/release/spotbye/Flacora?color=8b5cf6&labelColor=black&logo=github&label=Release)](https://github.com/spotbye/Flacora/releases/latest)
+[![Windows](https://img.shields.io/badge/Windows-369eff?labelColor=black&logo=data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI1MTIiIGhlaWdodD0iNTEyIiB2aWV3Qm94PSIwIDAgMjAgMjAiPjxwYXRoIGZpbGw9IiNmZmZmZmYiIGZpbGwtcnVsZT0iZXZlbm9kZCIgZD0iTTIwIDEwLjg3M1YyMEw4LjQ3OSAxOC41MzdsLjAwMS03LjY2NEgyMFptLTEzLjEyIDBsLS4wMDEgNy40NjFMMCAxNy40NjF2LTYuNTg4aDYuODhaTTIwIDkuMjczSDguNDhsLS4wMDEtNy44MUwyMCAwdjkuMjczWk02Ljg3OSAxLjY2NmwuMDAxIDcuNjA3SDBWMi41MzlsNi44NzktLjg3M1oiLz48L3N2Zz4=)](https://github.com/spotbye/Flacora/releases/latest)
+
+## Disclaimer
+
+Flacora is an independent open-source project. Service names and logos identify
+compatible music services and belong to their respective owners.
+
+Downloads require separately installed extensions. Use Flacora only for content
+you have permission to download, and follow the applicable laws and service terms.

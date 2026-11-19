@@ -1,8 +1,8 @@
 use super::widgets::{self, card};
 use crate::{app::{App, Page}, catalog::{Item, Kind, ResultPage}, icons, services};
-use rune::{Cursor, El, Icon, ScrollPos, SurfaceFit, Tx, col, el, icon, row, text};
+use rune::{Cursor, El, GrowthSpec, Icon, ScrollPos, SurfaceFit, Tx, col, el, icon, row, text};
 use rune_kit::{Button, ButtonVariant, ControlSize, Divider, IconButton, IconButtonVariant, Kit, Spinner, TextInput};
-use std::{cell::Cell, collections::BTreeMap, rc::Rc};
+use std::{borrow::Cow, cell::Cell, collections::BTreeMap, rc::Rc};
 
 fn provider_display_name(name: &str) -> &str {
     name.strip_suffix(" Web").unwrap_or(name)
@@ -17,7 +17,7 @@ pub fn page(s: &App, k: &Kit) -> El {
             Some(widgets::button(k, "catalog-install", "Go to Extensions", Some(&icons::PUZZLE), ButtonVariant::Submit,
                 |s: &mut App| s.page = Page::Extensions)))
     } else {
-        let mut bar = row().gap(6.0).flex_wrap().center_y();
+        let mut bar = widgets::filter_group("catalog-providers", "Catalog Provider");
         let current = s.chosen_catalog_provider().map(|p| p.manifest.id.as_str());
         for provider in providers {
             let id = provider.manifest.id.clone();
@@ -25,21 +25,9 @@ pub fn page(s: &App, k: &Kit) -> El {
             let key = format!("catalog-provider-{id}");
             let label = provider_display_name(&provider.manifest.name).to_owned();
             let logo = services::by_name(&label).and_then(|svc| widgets::provider_logo(s, svc, 14.0));
-            let mut button = Button::new(label.clone())
-                .variant(if selected { ButtonVariant::Submit } else { ButtonVariant::Outline })
-                .control_size(ControlSize::Small)
-                .on_press(move |s: &mut App| {
-                    if !selected {
-                        s.catalog.select_provider(id.clone());
-                        s.catalog_home();
-                    }
-                });
-            if let Some(logo) = logo {
-                button = button.label_with(move |font, ink| {
-                    row().gap(6.0).center_y().child(logo.a11y_hidden()).child(text(label).font(font).color(ink))
-                });
-            }
-            bar = bar.child(button.build(k).key(key));
+            bar = bar.child(widgets::filter_button(k, key, label, selected, logo, move |s, _| {
+                s.catalog.select_provider(id.clone());
+            }));
         }
         let mut search = TextInput::new(&s.catalog.input)
             .placeholder("Search or Paste a Music Link…")
@@ -47,12 +35,22 @@ pub fn page(s: &App, k: &Kit) -> El {
             .on_edit(|s: &mut App| &mut s.catalog.input)
             .on_submit(|s: &mut App, _: &mut Tx| s.submit_catalog());
         if !s.catalog.input.text.is_empty() {
-            search = search.clear_button();
+            search = search.trailing(
+                widgets::clear_input_button(k, "catalog-input", "Clear Search", |s| &mut s.catalog.input)
+                    .key("catalog-clear-search"),
+            );
         }
         let search = search.build(k).grow(1.0).min_w(0.0).key("catalog-input");
+        let home_active = s.catalog.home_feed_active();
+        let home = Button::new("Home Feed")
+            .icon(&icons::LAYOUT_GRID)
+            .variant(if home_active { ButtonVariant::Submit } else { ButtonVariant::Outline })
+            .expanded(home_active)
+            .on_press(App::toggle_catalog_home)
+            .build(k).h(36.0).key("catalog-home");
         let actions = row().w_full().gap(8.0).center_y().child(search)
             .child(widgets::button(k, "catalog-submit", "Go", Some(&icons::ARROW_RIGHT), ButtonVariant::Submit, |s: &mut App| s.submit_catalog()).h(36.0))
-            .child(widgets::button(k, "catalog-home", "Home Feed", Some(&icons::DISC), ButtonVariant::Outline, |s: &mut App| s.catalog_home()).h(36.0));
+            .child(home);
         let mut body = col().w_full().grow(1.0).min_h(0.0).gap(12.0)
             .child(card(k, "catalog-controls", col().gap(10.0).child(bar).child(actions)));
         if s.catalog.busy() || s.catalog.can_go_back() {
@@ -68,31 +66,26 @@ pub fn page(s: &App, k: &Kit) -> El {
             body = body.child(status);
         }
         if let Some(error) = &s.catalog.error {
-            let mut banner = row()
-                .key("catalog-error-banner")
-                .role("alert")
-                .w_full()
-                .gap(8.0)
-                .center_y()
-                .padding(10.0)
-                .radius(k.radius.xs)
-                .fill(k.c.danger.bg)
-                .child(icon(&icons::TRIANGLE_ALERT, 14.0).color(k.c.danger.fg))
-                .child(text(error.clone()).key("catalog-error").font(k.ty.small).color(k.c.danger.fg).wrap().grow(1.0).shrink());
-            if s.catalog.can_retry() {
-                banner = banner.child(widgets::button(k, "catalog-retry", "Try Again", Some(&icons::REFRESH_CW), ButtonVariant::Ghost, |s: &mut App| s.retry_catalog()));
-            }
-            if error == crate::catalog::MISSING_CATALOG_EXTENSION {
-                banner = banner.child(widgets::button(
+            let missing_extension = error == crate::catalog::MISSING_CATALOG_EXTENSION;
+            let title = if missing_extension { "Catalog Extension Required" } else { "Catalog Request Failed" };
+            let action = if missing_extension {
+                Some(widgets::button(
                     k,
                     "catalog-open-extensions",
                     "Go to Extensions",
                     Some(&icons::PUZZLE),
-                    ButtonVariant::Outline,
+                    ButtonVariant::Neutral,
                     |s: &mut App| s.page = Page::Extensions,
-                ));
-            }
-            body = body.child(banner);
+                ))
+            } else {
+                s.catalog.can_retry().then(|| widgets::button(
+                    k, "catalog-retry", "Try Again", Some(&icons::REFRESH_CW), ButtonVariant::Neutral,
+                    App::retry_catalog,
+                ))
+            };
+            body = body.child(widgets::error_banner(
+                k, "catalog-error-banner".into(), title, text(error.clone()).key("catalog-error"), action,
+            ));
         }
         if let Some(result) = &s.catalog.result {
             body = body.child(results(s, k, result));
@@ -137,7 +130,8 @@ fn results(s: &App, k: &Kit, result: &ResultPage) -> El {
             Some(&icons::ARROW_RIGHT), ButtonVariant::Submit, |s: &mut App| s.prepare_catalog_tracks()));
     }
     let home = s.catalog.showing_home();
-    let mut list = if home && !result.items.is_empty() { feed(s, k, result) } else { result_rows(s, k, result) }.pb(16.0);
+    let mut list = col().w_full().gap(8.0).pb(16.0)
+        .child(if home && !result.items.is_empty() { feed(s, k, result) } else { result_rows(s, k, result) });
     if result.next.is_some() && !s.catalog.busy() {
         list = list.child(widgets::button(k, "catalog-more", "Load More", None, ButtonVariant::Outline,
             |s: &mut App| s.catalog_more()).self_center());
@@ -150,18 +144,35 @@ fn results(s: &App, k: &Kit, result: &ResultPage) -> El {
     content.child(widgets::page_scroll(k, col().key(key).child(list)))
 }
 
-fn result_rows(s: &App, k: &Kit, result: &ResultPage) -> El {
-    let mut list = col().w_full().gap(4.0);
+fn result_rows(_s: &App, k: &Kit, result: &ResultPage) -> El {
     if result.items.is_empty() {
-        list = list.child(text("No items found.").font(k.ty.body).color(k.c.text_muted).py(16.0));
+        return col().w_full().child(text("No items found.").font(k.ty.body).color(k.c.text_muted).py(16.0));
     }
-    for (i, item) in result.items.iter().enumerate() {
-        if i > 0 {
-            list = list.child(Divider::horizontal().build(k));
-        }
-        list = list.child(item_row(s, k, i, item));
-    }
-    list
+    let dark = k.dark;
+    let count = result.items.len();
+    col().key("catalog-rows").w_full().growth(GrowthSpec::default()).virtual_rows(
+        count,
+        61.0,
+        |s: &App, i| {
+            s.catalog
+                .result
+                .as_ref()
+                .and_then(|page| page.items.get(i))
+                .map(|item| Cow::Borrowed(item.url.as_str()))
+                .unwrap_or_else(|| Cow::Owned(format!("catalog-row-{i}")))
+        },
+        move |s: &App, i| {
+            let k = super::theme::kit(dark);
+            let Some(item) = s.catalog.result.as_ref().and_then(|page| page.items.get(i)) else {
+                return el();
+            };
+            let mut wrap = col().w_full().gap(4.0).pb(4.0);
+            if i > 0 {
+                wrap = wrap.child(Divider::horizontal().build(k));
+            }
+            wrap.child(item_row(s, k, i, item))
+        },
+    )
 }
 
 fn feed(s: &App, k: &Kit, result: &ResultPage) -> El {
@@ -200,7 +211,7 @@ fn feed_shelf(s: &App, k: &Kit, index: usize, title: &str, items: &[&Item]) -> E
             let viewport = key.clone();
             let position = position.clone();
             head = head.child(IconButton::new(glyph).variant(IconButtonVariant::Ghost)
-                .control_size(ControlSize::Small).label(label).help(label)
+                .control_size(ControlSize::Large).label(label).help(label)
                 .on_press_tx(move |_: &mut App, tx| {
                     let at = position.get();
                     let x = (at.offset[0] + direction * at.viewport[0] * 0.85).clamp(0.0, at.max[0]);
@@ -226,9 +237,9 @@ fn feed_card(s: &App, k: &Kit, key: String, item: &Item) -> El {
     if selected {
         title = title.child(icon(&icons::CIRCLE_CHECK, 14.0).color(k.c.success.fg));
     }
-    col().key(key.clone()).w(152.0).padding(8.0).gap(4.0)
+    let mut card = col().key(key.clone()).w(152.0).padding(8.0).gap(4.0)
         .role("button").label(format!("{action} {}", item.title)).focusable(true)
-        .focus_ring(2.0, 0.0, k.c.border_focus).cursor(Cursor::Pointer)
+        .focus_ring(super::theme::FOCUS_RING_WIDTH, super::theme::FOCUS_RING_OFFSET, k.c.border_focus).cursor(Cursor::Pointer)
         .radius(k.radius.md).fill(k.c.surface_raised_base).hover(k.c.hover)
         .border(1.0, if selected { k.c.border_focus } else { k.c.border_base })
         .on_press(move |s: &mut App| {
@@ -241,7 +252,11 @@ fn feed_card(s: &App, k: &Kit, key: String, item: &Item) -> El {
         .child(artwork(s, k, &format!("{key}-artwork"), item.artwork.as_deref(), item_icon(kind), 134.0, kind == Kind::Artist))
         .child(title)
         .child(text(if item.detail.is_empty() { item.kind.label().to_owned() } else { item.detail.clone() })
-            .font(k.ty.small).color(k.c.text_muted).truncate())
+            .font(k.ty.small).color(k.c.text_muted).truncate());
+    if kind == Kind::Track {
+        card = card.checked(selected);
+    }
+    card
 }
 
 fn toggle_track(s: &mut App, url: &str) {
@@ -284,7 +299,7 @@ fn item_row(s: &App, k: &Kit, index: usize, item: &Item) -> El {
             .role("button")
             .label(format!("Open {}", item.title))
             .focusable(true)
-            .focus_ring(2.0, 1.0, k.c.border_focus)
+            .focus_ring(super::theme::FOCUS_RING_WIDTH, super::theme::FOCUS_RING_OFFSET, k.c.border_focus)
             .cursor(Cursor::Pointer)
             .radius(k.radius.sm)
             .hover(k.c.hover)

@@ -4,29 +4,18 @@ use super::widgets::{self, badge, card, cover, section, service_chip, status_bad
 use crate::app::{App, ConfirmAction, Page, RESOLVER_KEY};
 use crate::{icons, store};
 use crate::jobs::{Job, Status};
-use rune::{El, LoopSpec, ScrollSpec, Transition, Tx, col, el, icon, row, text};
-use rune_kit::{Button, ButtonVariant, ControlSize, Kit, ScrollBar, SegmentedControl, Spinner, TextInput};
+use rune::{El, GrowthSpec, LoopSpec, ScrollSpec, Transition, Tx, col, el, icon, row, text};
+use rune_kit::{Button, ButtonVariant, ControlSize, Kit, Menu, MenuItem, Placement, ScrollBar, SegmentedControl, Spinner, TextInput};
+use std::borrow::Cow;
 
-pub fn page(s: &App, k: &Kit) -> El {
+pub fn page(s: &App, k: &Kit, overlays: &mut Vec<El>) -> El {
     let active = s.active_jobs();
     let failed_count = s.jobs.iter().filter(|j| matches!(j.status, Status::Failed(_))).count();
     let cancelled_count = s.jobs.iter().filter(|j| matches!(j.status, Status::Cancelled)).count();
-    let finished = s.jobs.iter().filter(|j| j.is_finished()).count();
     let mut actions = Vec::new();
     if active > 1 {
-        let confirming = s.confirm_action == Some(ConfirmAction::CancelAll);
-        let (label, variant) = if confirming {
-            ("Confirm Cancel All", ButtonVariant::Danger)
-        } else {
-            ("Cancel All", ButtonVariant::Outline)
-        };
-        actions.push(widgets::button(k, "cancel-all", label, Some(&icons::SQUARE), variant, move |s: &mut App| {
-            if confirming {
-                s.confirm_action = None;
-                s.cancel_all_jobs();
-            } else {
-                s.confirm_action = Some(ConfirmAction::CancelAll);
-            }
+        actions.push(widgets::button(k, "cancel-all", "Cancel All", Some(&icons::SQUARE), ButtonVariant::Outline, |s| {
+            s.confirm_action = Some(ConfirmAction::CancelAll);
         }));
     }
     if failed_count > 0 || cancelled_count > 0 {
@@ -40,38 +29,39 @@ pub fn page(s: &App, k: &Kit) -> El {
             s.retry_failed_jobs()
         }));
     }
-    if failed_count > 0 {
-        actions.push(
-            Button::new("Copy Failed")
-                .icon(&icons::COPY)
-                .variant(ButtonVariant::Outline)
-                .control_size(ControlSize::Regular)
-                .help("Copy failed links to clipboard")
-                .on_press_tx(|s: &mut App, tx: &mut Tx| {
-                    let urls = s.failed_urls();
-                    if !urls.is_empty() {
-                        let count = urls.len();
-                        tx.copy(urls.join("\n"));
-                        s.success(format!("Copied {count} failed link{}", if count == 1 { "" } else { "s" }));
-                    }
-                })
-                .build(k)
-                .h(32.0)
-                .key("copy-failed"),
-        );
-    }
-    if finished > 0 {
-        actions.push(widgets::button(k, "clear-finished", "Clear Finished", Some(&icons::X), ButtonVariant::Danger, |s: &mut App| {
-            s.clear_finished()
-        }));
-    }
     let head = widgets::page_header(k, "Downloads", "Paste links from your music services. They download one after another.", actions);
-    let body = if s.jobs.is_empty() { empty(s, k) } else { queue(s, k) };
+    let body = if s.jobs.is_empty() { empty(s, k) } else { queue(s, k, failed_count > 0, overlays) };
+    if s.confirm_action == Some(ConfirmAction::CancelAll) {
+        overlays.push(cancel_all_dialog(s, k));
+    }
     let mut page = widgets::page("downloads-page").child(head);
     if !s.loaded || !s.installed.is_empty() || !s.jobs.is_empty() {
         page = page.child(composer(s, k));
     }
     page.child(body)
+}
+
+fn cancel_all_dialog(s: &App, k: &Kit) -> El {
+    let running = s.jobs.iter().filter(|job| job.status == Status::Running).count();
+    let queued = s.jobs.iter().filter(|job| job.status == Status::Queued).count();
+    let choosing = s.jobs.iter().filter(|job| job.status == Status::Choosing).count();
+    let total = running + queued + choosing;
+    let mut counts = format!("{running} active, {queued} queued");
+    if choosing > 0 {
+        counts.push_str(&format!(", {choosing} awaiting a service choice"));
+    }
+    let detail = if total > 0 {
+        format!("{total} job{} will be canceled ({counts}).", if total == 1 { "" } else { "s" })
+    } else {
+        "There are no jobs to cancel.".into()
+    };
+    let keep = widgets::button(k, "keep-downloading", "Keep Downloading", None, ButtonVariant::Neutral,
+        |s| s.confirm_action = None);
+    let cancel = widgets::button(k, "confirm-cancel-all", "Cancel All", Some(&icons::SQUARE), ButtonVariant::Danger, |s| {
+        s.confirm_action = None;
+        s.cancel_all_jobs();
+    }).disabled(total == 0);
+    widgets::confirmation_dialog(k, "cancel-all", "Cancel all jobs?", detail, "cancel-all", keep, cancel)
 }
 
 /// Valid URLs currently in the link box.
@@ -104,12 +94,17 @@ fn composer(s: &App, k: &Kit) -> El {
         .on_edit(|s: &mut App| &mut s.url)
         .on_submit(|s: &mut App, _: &mut Tx| s.enqueue());
     if !s.url.text.is_empty() {
-        field = field.clear_button();
-    }
-    if links.len() > 1 {
-        field = field.trailing(badge(k, format!("{} Links", links.len())).key("batch-summary"));
-    } else if let Some(service) = service {
-        field = field.trailing(service_chip(k, Some(service), service.name));
+        let mut accessories = row().gap(8.0).center_y();
+        if links.len() > 1 {
+            accessories = accessories.child(badge(k, format!("{} Links", links.len())).key("batch-summary"));
+        } else if let Some(service) = service {
+            accessories = accessories.child(service_chip(k, Some(service), service.name));
+        }
+        let clear = widgets::clear_input_button(k, "url", "Clear Links", |s| {
+            s.set_batch_service(None);
+            &mut s.url
+        }).key("downloads-clear-links");
+        field = field.trailing(accessories.child(clear));
     }
     let can_add = s.importing == 0 && (collection || s.selected().is_some() || s.resolver().is_some() || links.len() > 1);
     let (label, glyph) = if collection {
@@ -145,8 +140,36 @@ fn composer(s: &App, k: &Kit) -> El {
     let body = col()
         .gap(12.0)
         .child(input)
-        .child(row().w_full().gap(16.0).center_y().child(route(s, k)).child(destination));
+        .child(row().w_full().gap(16.0).center_y().child(route(s, k)).child(destination))
+        .children(batch_service_picker(s, k, &links));
     card(k, "composer", body)
+}
+
+fn batch_service_picker(s: &App, k: &Kit, links: &[&str]) -> Option<El> {
+    if !s.loaded || links.len() < 2 || !links.iter().any(|url| {
+        !crate::catalog::is_catalog_url(url) && crate::extensions::url_host(url)
+            .is_some_and(|host| s.resolver_for(&host).is_some())
+    }) {
+        return None;
+    }
+    let destinations: Vec<_> = crate::services::SERVICES.iter()
+        .filter(|service| s.batch_has_downloader(service)).collect();
+    if destinations.is_empty() {
+        return None;
+    }
+    let selected = s.batch_service();
+    let mut picker = widgets::filter_group("batch-services", "Service for Resolved Tracks")
+        .child(widgets::filter_button(k, "batch-service-manual".into(), "Choose per Track".into(),
+            selected.is_none(), None, |s, _| s.set_batch_service(None)));
+    for service in destinations {
+        picker = picker.child(widgets::filter_button(
+            k, format!("batch-service-{}", service.key), service.name.into(), selected == Some(service),
+            widgets::provider_logo(s, service, 14.0), move |s, _| s.set_batch_service(Some(service)),
+        ));
+    }
+    Some(row().w_full().flex_wrap().center_y().gap(8.0)
+        .child(text("Service for Resolved Tracks").font(k.ty.small_medium).color(k.c.text_muted))
+        .child(picker))
 }
 
 /// Which extension takes the link, and its options.
@@ -179,6 +202,7 @@ fn route(s: &App, k: &Kit) -> El {
             let current = ids.iter().position(|id| *id == resolver.manifest.id);
             line.child(
                 widgets::segmented(k, "resolver-pick", SegmentedControl::new(&names, current)
+                    .label("Link Resolver")
                     .on_pick(move |s: &mut App, i: usize, _: &mut Tx| s.set_preferred(RESOLVER_KEY, ids.get(i).cloned()))),
             )
         } else {
@@ -206,6 +230,7 @@ fn route(s: &App, k: &Kit) -> El {
         let key = App::service_key(&host);
         line = line.child(
             widgets::segmented(k, "extension-pick", SegmentedControl::new(&names, current)
+                .label("Downloader")
                 .on_pick(move |s: &mut App, i: usize, _: &mut Tx| s.set_preferred(&key, ids.get(i).cloned()))),
         );
     } else {
@@ -235,7 +260,7 @@ fn route(s: &App, k: &Kit) -> El {
 }
 
 fn direct_services_hint(s: &App) -> String {
-    let direct: Vec<&str> = crate::services::SERVICES[..crate::services::LOSSLESS]
+    let direct: Vec<&str> = crate::services::SERVICES[..crate::services::PRIMARY_DOWNLOAD_COUNT]
         .iter()
         .filter(|service| !s.installed_downloaders_for(service.primary_host()).is_empty())
         .map(|service| service.name)
@@ -270,7 +295,7 @@ fn empty(s: &App, k: &Kit) -> El {
     widgets::empty_state(k, "queue-empty", &icons::LIST_MUSIC, title, &body, action)
 }
 
-fn queue(s: &App, k: &Kit) -> El {
+fn queue(s: &App, k: &Kit, has_failures: bool, overlays: &mut Vec<El>) -> El {
     let active = s.active_jobs();
     let queued_count = s.jobs.iter().filter(|j| j.status == Status::Queued).count();
     let finished = s.jobs.len() - active;
@@ -307,15 +332,57 @@ fn queue(s: &App, k: &Kit) -> El {
                 .help(if s.queue_paused { "Resume starting queued downloads" } else { "Pause starting the next queued download" })
                 .on_press(|s: &mut App| s.toggle_queue_pause())
                 .build(k)
+                .h(28.0)
                 .key("toggle-pause"),
         );
     }
-    let mut list = col().key("queue").gap(10.0);
-    list = list.child(queue_head);
-    for job in &s.jobs {
-        list = list.child(job_card(s, k, job));
+    if finished > 0 {
+        queue_head = queue_head.child(queue_menu(s, k, has_failures, overlays));
     }
+    let dark = k.dark;
+    let rows = col().key("queue-rows").w_full().growth(GrowthSpec::default()).virtual_rows(
+        s.jobs.len(),
+        96.0,
+        |s: &App, i| {
+            s.jobs
+                .get(i)
+                .map(|job| Cow::Owned(format!("job-row-{}", job.id)))
+                .unwrap_or_else(|| Cow::Owned(format!("job-row-missing-{i}")))
+        },
+        move |s: &App, i| {
+            let k = super::theme::kit(dark);
+            let Some(job) = s.jobs.get(i) else {
+                return el();
+            };
+            let card = job_card(s, k, job);
+            col().w_full().pt(if i > 0 { 10.0 } else { 0.0 }).child(card)
+        },
+    );
+    let list = col().key("queue").gap(10.0).child(queue_head).child(rows);
     widgets::page_scroll(k, list)
+}
+
+fn queue_menu(s: &App, k: &Kit, has_failures: bool, overlays: &mut Vec<El>) -> El {
+    let trigger = widgets::icon_button(k, "queue-more", &icons::ELLIPSIS, "More Queue Actions", |s| {
+        s.queue_menu_open = !s.queue_menu_open;
+    });
+    let mut menu = Menu::new("queue-actions").trigger(trigger).open(s.queue_menu_open)
+        .placement(Placement::BottomEnd).min_width(180.0).on_close(|s: &mut App| s.queue_menu_open = false);
+    if has_failures {
+        menu = menu.item(MenuItem::new("Copy Failed Links").icon(&icons::COPY).on_select_tx(|s: &mut App, tx| {
+            s.queue_menu_open = false;
+            let urls = s.failed_urls();
+            if !urls.is_empty() {
+                let count = urls.len();
+                tx.copy(urls.join("\n"));
+                s.success(format!("Copied {count} failed link{}", if count == 1 { "" } else { "s" }));
+            }
+        }));
+    }
+    menu.item(MenuItem::new("Clear Finished").icon(&icons::X).danger(true).on_select(|s: &mut App| {
+        s.queue_menu_open = false;
+        s.clear_finished();
+    })).build(k, overlays)
 }
 
 fn job_card(s: &App, k: &Kit, job: &Job) -> El {
@@ -336,7 +403,8 @@ fn job_card(s: &App, k: &Kit, job: &Job) -> El {
     if job.lookup_file.is_some() {
         let manifest = &job.extension.manifest;
         let url = crate::extensions::site_url(&manifest.description);
-        meta = meta.child(widgets::badge(k, manifest.kind.label()));
+        let label = if manifest.can_write_tags() { "Tag Audio" } else { manifest.kind.label() };
+        meta = meta.child(widgets::badge(k, label));
         if let Some(url) = url {
             let tip = format!("Open {}", manifest.description.trim());
             meta = meta.child(
@@ -394,16 +462,15 @@ fn job_card(s: &App, k: &Kit, job: &Job) -> El {
         body = body.child(choices(s, k, job));
     }
     if let Status::Failed(reason) = &job.status {
-        body = body.child(
-            row()
-                .gap(8.0)
-                .center_y()
-                .padding(8.0)
-                .radius(k.radius.xs)
-                .fill(k.c.danger.bg)
-                .child(icon(&icons::TRIANGLE_ALERT, 14.0).color(k.c.danger.fg))
-                .child(text(reason.clone()).font(k.ty.small).color(k.c.danger.fg).wrap().shrink()),
-        );
+        let title = match job.extension.manifest.kind {
+            crate::extensions::Kind::Downloader => "Download Failed",
+            crate::extensions::Kind::Resolver => "Link Resolution Failed",
+            _ if job.extension.manifest.can_write_tags() => "Tagging Failed",
+            _ => "Lookup Failed",
+        };
+        let retry = widgets::button(k, &format!("retry-{id}"), "Try Again", Some(&icons::REFRESH_CW),
+            ButtonVariant::Neutral, move |s: &mut App| s.retry_job(id));
+        body = body.child(widgets::error_banner(k, format!("job-error-{id}"), title, text(reason.clone()), Some(retry)));
     }
     if job.show_log && !job.log.is_empty() {
         body = body.child(log(k, job));
@@ -414,24 +481,27 @@ fn job_card(s: &App, k: &Kit, job: &Job) -> El {
 fn download_progress(k: &Kit, job: &Job) -> El {
     const HEIGHT: f32 = 8.0;
     const RADIUS: f32 = HEIGHT / 2.0;
+    const SWEEP_WIDTH: f32 = 0.30;
 
     let label = job.stage.as_deref().map_or_else(|| "Working".into(), title_case_label);
     let mut progress = col().key(format!("progress-{}", job.id)).role("progressbar").label(label.clone()).w_full().gap(4.0);
-    let mut header = row().center_y().justify_between()
-        .child(text(label).font(k.ty.text_small).color(k.c.std_text));
-    let fill = el().h_full().radius(RADIUS).fill(k.c.border_active).transition(Transition::none());
-    let fill = match job.progress {
+    let mut header = row().w_full().gap(8.0).center_y().justify_between()
+        .child(text(label).font(k.ty.body).color(k.c.text_base).min_w(0.0).shrink().truncate());
+    let fill = el().h_full().radius(RADIUS).fill(k.c.bg_accent).transition(Transition::none());
+    let fill = match job.progress.filter(|value| value.is_finite()) {
         Some(value) => {
             let value = value.clamp(0.0, 1.0);
             let percent = format!("{}%", (value * 100.0).round());
             progress = progress.range_value((f64::from(value) * 1e4).round() / 1e4, 0.0, 1.0).a11y_value(percent.clone());
-            header = header.child(text(percent).font(k.ty.text_small).color(k.c.text_weak));
+            header = header.child(text(percent).key("percentage").font(k.ty.small)
+                .color(k.c.text_muted).transition(Transition::none()));
             fill.key("fill").w_frac(value)
         }
-        None => fill.key("moving-fill").w_frac(0.25).looping(LoopSpec::slide(1.4, [-1.0, 0.0], [4.0, 0.0])),
+        None => fill.key("moving-fill").w_frac(SWEEP_WIDTH)
+            .looping(LoopSpec::slide(1.4, [-1.0, 0.0], [1.0 / SWEEP_WIDTH, 0.0])),
     };
     let track = row().key("track").w_full().h(HEIGHT).radius(RADIUS).clip_rounded(RADIUS)
-        .fill(k.c.surface_base).border(1.0, k.c.border_weak).child(fill);
+        .fill(k.c.border_strong).child(fill);
     progress.child(header.a11y_hidden()).child(track.a11y_hidden())
 }
 
@@ -461,6 +531,12 @@ fn choices(s: &App, k: &Kit, job: &Job) -> El {
     let mut skip: Vec<&str> = job.choices.iter().map(|c| c.service.name).collect();
     skip.extend(job.service.map(|s| s.name));
     let others: Vec<&str> = job.links.iter().map(|(service, _)| service.as_str()).filter(|s| !skip.contains(s)).collect();
+    let heading = match job.batch_service {
+        Some(service) if s.importing > 0 && job.choices.iter().any(|choice| choice.service == service) =>
+            format!("Waiting for installation before using {}.", service.name),
+        Some(service) => format!("{} is unavailable for this track. Choose a service.", service.name),
+        None => format!("{resolver} found this track. Download it from:"),
+    };
     let mut panel = col()
         .key(format!("choices-panel-{id}"))
         .w_full()
@@ -474,7 +550,7 @@ fn choices(s: &App, k: &Kit, job: &Job) -> El {
                 .gap(8.0)
                 .center_y()
                 .child(icon(&icons::LINK, 14.0).color(k.c.text_accent))
-                .child(text(format!("{resolver} found this track. Download it from:")).font(k.ty.small_medium).color(k.c.text_strong).wrap().shrink()),
+                .child(text(heading).key(format!("choices-heading-{id}")).font(k.ty.small_medium).color(k.c.text_strong).wrap().shrink()),
         )
         .child(buttons);
     if !others.is_empty() {
@@ -493,8 +569,9 @@ fn status(k: &Kit, job: &Job) -> El {
         Status::Queued => (&icons::CLOCK, "Waiting", None),
         Status::Choosing => (&icons::CHEVRONS_UP_DOWN, "Choose a Service", Some(k.c.info)),
         Status::Running => return row().gap(6.0).center_y().child(Spinner::new().size(14.0).build(k)),
+        Status::Done if job.extension.manifest.can_write_tags() => (&icons::CIRCLE_CHECK, "Tagged", Some(k.c.success)),
         Status::Done => (&icons::CIRCLE_CHECK, "Saved", Some(k.c.success)),
-        Status::Failed(_) => (&icons::TRIANGLE_ALERT, "Failed", Some(k.c.danger)),
+        Status::Failed(_) => (&icons::CIRCLE_X, "Failed", Some(k.c.danger)),
         Status::Cancelled => (&icons::CIRCLE_X, "Cancelled", None),
     };
     status_badge(k, glyph, label, colors).key(format!("status-{}", job.id))
@@ -507,7 +584,11 @@ fn actions(k: &Kit, job: &Job) -> El {
         Status::Done => {
             if let Some(file) = job.main_file() {
                 let (play, reveal) = (file.to_owned(), file.to_owned());
-                let (glyph, label) = if job.lookup_file.is_some() { (&icons::SQUARE_ARROW_UP_RIGHT, "Open File") } else { (&icons::PLAY, "Play") };
+                let (glyph, label) = if job.lookup_file.is_some() && !job.extension.manifest.can_write_tags() {
+                    (&icons::SQUARE_ARROW_UP_RIGHT, "Open File")
+                } else {
+                    (&icons::PLAY, "Play")
+                };
                 actions = actions
                     .child(widgets::icon_button(k, &format!("play-{id}"), glyph, label, move |s: &mut App| s.open(&play)))
                     .child(widgets::icon_button(k, &format!("reveal-{id}"), &icons::FOLDER, "Show in Folder", move |s: &mut App| {
@@ -515,7 +596,8 @@ fn actions(k: &Kit, job: &Job) -> El {
                     }));
             }
         }
-        Status::Failed(_) | Status::Cancelled => {
+        Status::Failed(_) => {}
+        Status::Cancelled => {
             actions = actions.child(widgets::icon_button(k, &format!("retry-{id}"), &icons::REFRESH_CW, "Try Again", move |s: &mut App| {
                 s.retry_job(id)
             }));

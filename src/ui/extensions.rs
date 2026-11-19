@@ -1,6 +1,6 @@
 //! Locally installed extensions and the package drop target.
 
-use super::theme::{CARD_RADIUS, SUBHEADING};
+use super::theme::{FOCUS_RING_OFFSET, FOCUS_RING_WIDTH, SUBHEADING};
 use super::widgets::{self, badge, badge_with_icon, card, section, service_chip, status_badge};
 use crate::app::{App, ConfirmAction};
 use crate::extensions::Kind;
@@ -8,7 +8,7 @@ use crate::icons;
 use crate::services;
 use crate::store::{self, ExtensionStatus, Installed};
 use rune::{Cursor, El, GrowthSpec, Link, LinkPaint, Spring, Tx, col, el, icon, row, text};
-use rune_kit::{Button, ButtonVariant, ControlSize, Divider, Kit, Spinner};
+use rune_kit::{Button, ButtonVariant, Divider, Kit, Spinner};
 
 const CATEGORIES: [(Kind, &str); 4] = [
     (Kind::Downloader, "downloaders"),
@@ -26,13 +26,18 @@ fn select_filter(s: &mut App, tx: &mut Tx, filter: Option<Kind>) {
     }
 }
 
-pub fn page(s: &App, k: &Kit) -> El {
+pub fn page(s: &App, k: &Kit, overlays: &mut Vec<El>) -> El {
     let mut actions = Vec::new();
     if s.loaded && !s.installed.is_empty() {
         let checking = s.any_checking();
         let label = if checking { "Checking Status…" } else { "Check Status" };
         actions.push(widgets::button(k, "check-extension-status", label, Some(&icons::REFRESH_CW), ButtonVariant::Outline,
             App::check_all).disabled(checking || s.importing > 0));
+        actions.push(widgets::button(k, "remove-all-extensions", "Remove All", Some(&icons::TRASH_2), ButtonVariant::Outline, |s| {
+            if s.removing.is_empty() {
+                s.confirm_action = Some(ConfirmAction::RemoveAllExtensions);
+            }
+        }).disabled(!s.removing.is_empty()));
         let label = if s.importing > 0 { "Installing Packages…" } else { "Install Extension" };
         actions.push(Button::new(label)
             .variant(ButtonVariant::Submit)
@@ -41,6 +46,9 @@ pub fn page(s: &App, k: &Kit) -> El {
             .disabled(s.browsing_packages)
             .on_press_tx(App::browse_packages)
             .build(k).h(32.0).key("install-extension"));
+    }
+    if s.confirm_action == Some(ConfirmAction::RemoveAllExtensions) {
+        overlays.push(remove_all_dialog(s, k));
     }
     let head = widgets::page_header_with_subtitle(k, "Extensions", download_link(k), actions);
     let mut page = widgets::page("extensions-page").child(head);
@@ -62,27 +70,17 @@ pub fn page(s: &App, k: &Kit) -> El {
             .collect();
         let active_filter = s.extension_filter.filter(|kind| present_categories.iter().any(|(k, _, _)| k == kind));
         if present_categories.len() > 1 {
-            let mut chips = row().key("extension-filters").gap(6.0).center_y().flex_wrap();
-            let all_selected = active_filter.is_none();
-            chips = chips.child(
-                Button::new(format!("All ({})", s.installed.len()))
-                    .variant(if all_selected { ButtonVariant::Submit } else { ButtonVariant::Outline })
-                    .control_size(ControlSize::Small)
-                    .on_press_tx(|s: &mut App, tx| select_filter(s, tx, None))
-                    .build(k)
-                    .key("ext-filter-all"),
-            );
-            for (kind, key, count) in &present_categories {
-                let kind = *kind;
+            let mut chips = widgets::filter_group("extension-filters", "Extension Type")
+                .child(widgets::filter_button(
+                    k, "ext-filter-all".into(), format!("All ({})", s.installed.len()),
+                    active_filter.is_none(), None, |s, tx| select_filter(s, tx, None),
+                ));
+            for &(kind, key, count) in &present_categories {
                 let selected = active_filter == Some(kind);
-                chips = chips.child(
-                    Button::new(format!("{} ({count})", kind.label()))
-                        .variant(if selected { ButtonVariant::Submit } else { ButtonVariant::Outline })
-                        .control_size(ControlSize::Small)
-                        .on_press_tx(move |s: &mut App, tx| select_filter(s, tx, Some(kind)))
-                        .build(k)
-                        .key(format!("ext-filter-{key}")),
-                );
+                chips = chips.child(widgets::filter_button(
+                    k, format!("ext-filter-{key}"), format!("{} ({count})", kind.label()), selected, None,
+                    move |s, tx| select_filter(s, tx, Some(kind)),
+                ));
             }
             filter_bar = Some(chips);
         }
@@ -113,6 +111,23 @@ pub fn page(s: &App, k: &Kit) -> El {
     page.child(widgets::page_scroll(k, col().key("extension-list").child(list)))
 }
 
+fn remove_all_dialog(s: &App, k: &Kit) -> El {
+    let count = s.installed.len();
+    let blocker = s.remove_all_extensions_blocker();
+    let extensions = format!("{count} installed extension{}", if count == 1 { "" } else { "s" });
+    let detail = if let Some(reason) = blocker {
+        format!("{extensions}. {reason}")
+    } else {
+        format!("This will uninstall {extensions}. You can reinstall them from their .fext packages.")
+    };
+    let keep = widgets::button(k, "keep-extensions", "Keep Extensions", None, ButtonVariant::Neutral,
+        |s| s.confirm_action = None);
+    let remove = widgets::button(k, "confirm-remove-all-extensions", "Remove All", Some(&icons::TRASH_2), ButtonVariant::Danger,
+        App::remove_all_extensions).disabled(count == 0 || blocker.is_some());
+    widgets::confirmation_dialog(k, "remove-all-extensions", "Remove all extensions?", detail,
+        "remove-all-extensions", keep, remove)
+}
+
 fn download_link(k: &Kit) -> El {
     let label = "Get Extension on Rentry";
     let link = Link::new(0..label.len(), EXTENSIONS_URL)
@@ -137,7 +152,12 @@ fn drop_zone(s: &App, k: &Kit) -> El {
         format!("Drop .{} Packages", store::PACKAGE)
     };
 
-    let accent = if active { k.c.info.fg } else { k.c.text_strong };
+    let accent = if active { k.c.border_focus } else { k.c.text_strong };
+    let hint_color = if k.dark {
+        rune::color::hex("#c6c6c6").expect("Astryx color")
+    } else {
+        k.c.text_muted
+    };
     let symbol = if installing {
         Spinner::new().size(24.0).build(k)
     } else {
@@ -147,24 +167,24 @@ fn drop_zone(s: &App, k: &Kit) -> El {
         .child(text(label).role(if installing { "status" } else { "heading" }).font(SUBHEADING).color(accent));
     if !installing {
         message = message.child(
-            text("Drop them anywhere in this window, or click here to browse.").font(k.ty.body).color(k.c.text_muted),
+            text("Drop them anywhere in this window, or click here to browse.").font(k.ty.body).color(hint_color),
         );
     }
 
     col().w_full().max_w(560.0).h(224.0).center().gap(16.0)
-        .child(el().size(56.0, 56.0).center().radius(999.0).fill(if active { k.c.info.bg } else { k.c.layer_02 })
+        .child(el().size(56.0, 56.0).center().radius(999.0).fill(if active { k.c.layer_04 } else { k.c.layer_02 })
             .child(symbol).a11y_hidden())
         .child(message)
         .key("drop-zone")
         .role("button")
         .label("Browse for Extension Packages")
         .focusable(true)
-        .focus_ring(2.0, 2.0, k.c.border_focus)
+        .focus_ring(FOCUS_RING_WIDTH, FOCUS_RING_OFFSET, k.c.border_focus)
         .cursor(Cursor::Pointer)
-        .radius(CARD_RADIUS)
-        .fill(if active { k.c.info.bg.alpha(0.38) } else { k.c.bg_base })
+        .radius(k.radius.md)
+        .fill(if active { k.c.layer_04.alpha(0.35) } else { k.c.bg_base })
         .hover(k.c.hover)
-        .border(if active { 2.0 } else { 1.0 }, if active { k.c.info.fg } else { k.c.border_strong })
+        .border(if active { 2.0 } else { 1.0 }, if active { k.c.border_focus } else { k.c.border_strong })
         .border_dash(6.0, 4.0)
         .on_press_tx(App::browse_packages)
 }
@@ -181,12 +201,9 @@ fn extension_card(s: &App, k: &Kit, installed: &Installed) -> El {
         .unwrap_or(manifest.description.trim());
     let site_url = crate::extensions::site_url(&manifest.description);
 
-    let mut title = row().gap(6.0).center_y().flex_wrap()
-        .child(text(manifest.name.clone()).font(k.ty.body_medium).color(k.c.text_strong));
-    if manifest.catalog {
-        title = title.child(badge(k, "Catalog").key(format!("catalog-badge-{id}")));
-    }
-    let title = title.child(badge(k, format!("v{}", manifest.version)));
+    let title = row().gap(6.0).center_y().flex_wrap()
+        .child(text(manifest.name.clone()).font(k.ty.body_medium).color(k.c.text_strong))
+        .child(badge(k, format!("v{}", manifest.version)));
     let mut info = col().items_start().gap(6.0).grow(1.0).shrink().min_w(0.0).child(title);
     if !website.is_empty() && let Some(href) = site_url {
         let link = Link::new(0..website.len(), href)
@@ -338,15 +355,21 @@ fn online_status(s: &App, k: &Kit, id: &str) -> El {
     };
     let can_recheck = !checking && s.importing == 0 && !s.removing.contains(id);
     let help = if can_recheck { format!("{detail} Click to check again.") } else { detail.to_owned() };
-    let mut badge = status_badge(k, glyph, label, colors).key(format!("online-status-{id}")).help(help);
+    let key = format!("online-status-{id}");
+    let badge = status_badge(k, glyph, label, colors);
     if can_recheck {
         let id = id.to_owned();
-        badge = badge
+        return row().h(28.0).center().radius(10.0)
             .role("button")
+            .label(label)
+            .key(key).help(help)
             .focusable(true)
-            .focus_ring(2.0, 1.0, k.c.border_focus)
+            .focus_ring(FOCUS_RING_WIDTH, FOCUS_RING_OFFSET, k.c.border_focus)
             .cursor(Cursor::Pointer)
-            .on_press(move |s: &mut App| s.check_extension(&id));
+            .hover(k.c.hover)
+            .press(k.c.pressed)
+            .on_press(move |s: &mut App| s.check_extension(&id))
+            .child(badge.a11y_hidden());
     }
-    badge
+    badge.key(key).help(help)
 }

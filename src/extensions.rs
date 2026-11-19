@@ -9,8 +9,11 @@
 //! `browser` is true). Its stdout and stderr lines are shown as the job log and
 //! exit code 0 means success.
 
+use semver::Version;
 use serde::Deserialize;
 use std::{collections::BTreeMap, path::Path};
+
+pub const MIN_TAG_WRITER_VERSION: Version = Version::new(1, 0, 1);
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 pub struct Choice {
@@ -90,6 +93,12 @@ pub struct Manifest {
     /// Runs catalog commands independently of a local FLAC lookup.
     #[serde(default)]
     pub catalog: bool,
+    /// Exposes catalog commands without offering a local FLAC lookup.
+    #[serde(default)]
+    pub catalog_only: bool,
+    /// Writes tags into the supplied FLAC and reports the same file as saved.
+    #[serde(default)]
+    pub writes_tags: bool,
     /// Arguments that make it print a `services` event with what works right now.
     #[serde(default)]
     pub status: Vec<String>,
@@ -106,6 +115,22 @@ pub struct Manifest {
     /// Programs it expects on PATH, e.g. `ffmpeg`.
     #[serde(default)]
     pub requires: Vec<String>,
+}
+
+impl Manifest {
+    pub fn supports_lookup(&self) -> bool {
+        self.kind.is_lookup() && !self.catalog_only
+    }
+
+    pub fn tag_writer_update(&self) -> Option<String> {
+        let needs_version = self.writes_tags || legacy_web_id(&self.id).is_some() || web_replacement(&self.id).is_some();
+        (needs_version && !Version::parse(&self.version).is_ok_and(|version| version >= MIN_TAG_WRITER_VERSION))
+            .then(|| format!("Update {} to v{MIN_TAG_WRITER_VERSION} or newer to tag FLAC files.", self.name))
+    }
+
+    pub fn can_write_tags(&self) -> bool {
+        self.writes_tags && self.tag_writer_update().is_none()
+    }
 }
 
 /// Keep the established fallback order for installed downloaders and resolvers.
@@ -134,7 +159,7 @@ pub fn web_replacement(old_id: &str) -> Option<&'static str> {
 }
 
 pub fn parse_manifest(json: &str) -> Result<Manifest, String> {
-    let manifest: Manifest = serde_json::from_str(json).map_err(|e| format!("Invalid extension.json: {e}"))?;
+    let mut manifest: Manifest = serde_json::from_str(json).map_err(|e| format!("Invalid extension.json: {e}"))?;
     valid_id(&manifest.id)?;
     if !manifest.kind.is_lookup() && manifest.hosts.is_empty() {
         return Err("extension.json lists no hosts".into());
@@ -142,11 +167,17 @@ pub fn parse_manifest(json: &str) -> Result<Manifest, String> {
     if manifest.catalog && (manifest.kind != Kind::Metadata || manifest.hosts.is_empty()) {
         return Err("Catalog extensions must be metadata providers with hosts".into());
     }
+    if manifest.catalog_only && (!manifest.catalog || manifest.writes_tags) {
+        return Err("Catalog-only extensions must provide a catalog without a tag writer".into());
+    }
+    if manifest.writes_tags && manifest.kind != Kind::Metadata {
+        return Err("Tag writers must be metadata providers".into());
+    }
     if manifest.status_url.as_deref().is_some_and(|url| https_status_url(url).is_none()) {
         return Err("extension.json status_url must be an HTTPS URL without credentials or a fragment".into());
     }
     let input = if manifest.kind.is_lookup() { "{file}" } else { "{url}" };
-    if !manifest.args.iter().any(|arg| arg.contains(input)) {
+    if !manifest.catalog_only && !manifest.args.iter().any(|arg| arg.contains(input)) {
         return Err(format!("extension.json args never pass {input}"));
     }
     for path in manifest.executable.values() {
@@ -159,6 +190,9 @@ pub fn parse_manifest(json: &str) -> Result<Manifest, String> {
             return Err(format!("extension.json env cannot override {key}"));
         }
     }
+    // Ignore retired routes in packages already installed by older builds.
+    manifest.hosts.retain(|host| !crate::services::is_excluded_host(host));
+    manifest.services.retain(|name| !crate::services::is_excluded_service(name));
     Ok(manifest)
 }
 

@@ -12,7 +12,7 @@ use crate::{
     store::{Installed, Settings},
 };
 use std::{
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -51,6 +51,7 @@ pub struct Job {
     pub picks: Vec<usize>,
     pub output: PathBuf,
     pub layout: Layout,
+    pub auto_tag: bool,
     pub staging: Option<tempfile::TempDir>,
     pub status: Status,
     pub title: Option<String>,
@@ -72,6 +73,8 @@ pub struct Job {
     pub links: Vec<(String, String)>,
     /// The services from `links` an installed downloader takes, best first.
     pub choices: Vec<Choice>,
+    /// The destination explicitly chosen for this resolver's batch.
+    pub batch_service: Option<&'static Service>,
     /// Set once a resolver handed the job to a downloader: the resolver's name and the
     /// service of the link that was pasted.
     pub resolved: Option<(String, Option<&'static Service>)>,
@@ -96,6 +99,7 @@ impl Job {
             picks,
             output: settings.output.clone(),
             layout: settings.layout,
+            auto_tag: settings.auto_tag,
             staging: None,
             lookup_file: None,
             status: Status::Queued,
@@ -114,6 +118,7 @@ impl Job {
             finished: None,
             links: Vec::new(),
             choices: Vec::new(),
+            batch_service: None,
             resolved: None,
         }
     }
@@ -202,6 +207,11 @@ fn job_line(job: &mut Job, line: String) -> Option<String> {
         Some(Event::Links(links)) => job.links = links,
         Some(Event::Services(_)) => {}
         None if line.starts_with(protocol::PREFIX) => {}
+        None if job.extension.manifest.kind == Kind::Resolver
+            && line.split_once(':').is_some_and(|(name, url)| {
+                services::is_excluded_service(name)
+                    || extensions::url_host(url.trim()).is_some_and(|host| services::is_excluded_host(&host))
+            }) => {}
         None => {
             if let Some(path) = protocol::saved_line(&line)
                 && !job.saved.contains(&path)
@@ -234,11 +244,13 @@ impl App {
         }
         if let [url] = links.as_slice() && crate::catalog::is_catalog_url(url) {
             self.url.clear();
+            self.batch_destination = None;
             self.open_catalog(url.clone(), false);
             return;
         }
         let mut unsupported = Vec::new();
         let mut added = 0;
+        let batch_service = (links.len() > 1).then(|| self.batch_service()).flatten();
         for url in links {
             if crate::catalog::is_catalog_url(&url) {
                 self.warn("Open a catalog link on its own to choose tracks from it.");
@@ -253,11 +265,16 @@ impl App {
             let picks = extension.manifest.options.iter().map(|o| self.pick_index(&extension.manifest.id, o)).collect();
             let id = self.next_job;
             self.next_job += 1;
-            self.jobs.push(Job::queued(id, url, services::detect(&host), extension, picks, &self.settings));
+            let mut job = Job::queued(id, url, services::detect(&host), extension, picks, &self.settings);
+            if job.extension.manifest.kind == Kind::Resolver {
+                job.batch_service = batch_service;
+            }
+            self.jobs.push(job);
             added += 1;
         }
         if added > 0 {
             self.url.clear();
+            self.batch_destination = None;
         }
         if !unsupported.is_empty() {
             unsupported.dedup();
@@ -270,23 +287,36 @@ impl App {
         if self.wait_for_import() {
             return;
         }
-        let Some(entry) = self.history.get(index) else { return };
-        let Some(file) = entry.flac_file() else { return };
-        let Some(extension) = self.installed.iter().find(|i| i.manifest.id == extension_id && i.manifest.kind.is_lookup()).cloned() else {
+        let Some(entry) = self.history.get(index).cloned() else { return };
+        let Some(extension) = self.installed.iter().find(|i| i.manifest.id == extension_id && i.manifest.supports_lookup()).cloned() else {
             return;
         };
         if self.removing.contains(extension_id) {
             return;
         }
-        let Ok(file) = std::path::absolute(file) else {
-            self.error("Could not resolve the track's file path.");
-            return;
-        };
-        if self.jobs.iter().any(|j| !j.is_finished() && j.extension.manifest.id == extension_id && j.lookup_file.as_ref() == Some(&file)) {
-            self.warn("This lookup is already in the queue.");
+        if let Some(message) = extension.manifest.tag_writer_update() {
+            self.warn(message);
             return;
         }
-        let picks = extension.manifest.options.iter().map(|o| self.pick_index(extension_id, o)).collect();
+        let Some(job) = self.lookup_job(&entry, extension) else { return };
+        self.jobs.push(job);
+        self.lookup_picker = None;
+        self.page = Page::Downloads;
+        self.pump();
+    }
+
+    fn lookup_job(&mut self, entry: &Entry, extension: Installed) -> Option<Job> {
+        let file = entry.flac_file()?;
+        let Ok(file) = std::path::absolute(file) else {
+            self.error("Could not resolve the track's file path.");
+            return None;
+        };
+        let id = &extension.manifest.id;
+        if self.jobs.iter().any(|j| !j.is_finished() && &j.extension.manifest.id == id && j.lookup_file.as_ref() == Some(&file)) {
+            self.warn("This lookup is already in the queue.");
+            return None;
+        }
+        let picks = extension.manifest.options.iter().map(|o| self.pick_index(id, o)).collect();
         let mut job = Job::queued(self.next_job, entry.url.clone(), None, extension, picks, &self.settings);
         job.lookup_file = Some(file);
         job.title = Some(entry.title.clone());
@@ -294,10 +324,7 @@ impl App {
         job.album = Some(entry.album.clone()).filter(|s| !s.is_empty());
         job.cover = entry.cover.clone();
         self.next_job += 1;
-        self.jobs.push(job);
-        self.lookup_picker = None;
-        self.page = Page::Downloads;
-        self.pump();
+        Some(job)
     }
 
     /// Starts the next queued job when nothing is running.
@@ -307,6 +334,12 @@ impl App {
         }
         let Some(index) = self.jobs.iter().position(|j| j.status == Status::Queued) else { return };
         let job = &self.jobs[index];
+        let id = &job.extension.manifest.id;
+        if self.removing.contains(id) || !self.installed.iter().any(|i| i.manifest.id == *id) {
+            let name = job.extension.manifest.name.clone();
+            self.jobs[index].status = Status::Failed(format!("Install {name} to run this job."));
+            return self.pump();
+        }
         let Some(program) = job.extension.executable() else {
             let name = job.extension.manifest.name.clone();
             self.jobs[index].status = Status::Failed(format!("{name} has no build for this computer"));
@@ -432,7 +465,15 @@ impl App {
                             return;
                         }
                         (Kind::Downloader, None) => {
-                            match validate_saved_files(Some(&job.output), &job.saved, enforce_containment) {
+                            if enforce_containment {
+                                let output = job.output.clone();
+                                let files = std::mem::take(&mut job.saved);
+                                job.status = Status::Running;
+                                job.stage = Some("Verifying Download".into());
+                                self.background(move || Msg::JobValidated(job_id, validate_saved_files(Some(&output), &files, true)));
+                                return;
+                            }
+                            match validate_saved_files(Some(&job.output), &job.saved, false) {
                                 Ok(valid) => {
                                     job.saved = valid;
                                     self.record(job_id);
@@ -441,8 +482,31 @@ impl App {
                             }
                         }
                         _ => {
-                            let parent = job.lookup_file.as_deref().and_then(std::path::Path::parent);
-                            match validate_saved_files(parent, &job.saved, enforce_containment) {
+                            let file = job.lookup_file.clone();
+                            let parent = file.as_deref().and_then(Path::parent).map(PathBuf::from);
+                            if enforce_containment {
+                                let files = std::mem::take(&mut job.saved);
+                                job.status = Status::Running;
+                                job.stage = Some("Verifying Output".into());
+                                if job.extension.manifest.can_write_tags() && let Some(file) = file {
+                                    let paths = self.paths.clone();
+                                    self.background(move || {
+                                        let result = (|| {
+                                            let mut validated = validate_saved_files(parent.as_deref(), &files, true)?;
+                                            let expected = file.canonicalize().map_err(|_| "The FLAC file is missing")?;
+                                            if validated.len() != 1 || Path::new(&validated[0]).canonicalize().ok().as_ref() != Some(&expected) {
+                                                return Err("The extension did not report the original FLAC as tagged".into());
+                                            }
+                                            library::read_tagged_track(&paths, validated.remove(0))
+                                        })();
+                                        Msg::TagsWritten(job_id, result)
+                                    });
+                                } else {
+                                    self.background(move || Msg::JobValidated(job_id, validate_saved_files(parent.as_deref(), &files, true)));
+                                }
+                                return;
+                            }
+                            match validate_saved_files(parent.as_deref(), &job.saved, false) {
                                 Ok(valid) => {
                                     job.saved = valid;
                                     self.refresh_library_files();
@@ -459,18 +523,97 @@ impl App {
         }
     }
 
+    pub fn job_validated(&mut self, job_id: u64, result: Result<Vec<String>, String>) {
+        let Some(job) = self.jobs.iter_mut().find(|j| j.id == job_id && j.is_running()) else { return };
+        let cancelled = job.cancelling;
+        let is_downloader = job.extension.manifest.kind == Kind::Downloader;
+        job.cancelling = false;
+        job.stage = None;
+        if cancelled {
+            job.status = Status::Cancelled;
+            self.refresh_tools_if_missing();
+            self.pump();
+            self.pump_status_checks();
+            return;
+        }
+        match result {
+            Ok(valid) => {
+                job.saved = valid;
+                job.status = Status::Done;
+                if is_downloader {
+                    self.record(job_id);
+                } else {
+                    self.refresh_library_files();
+                }
+            }
+            Err(error) => job.status = Status::Failed(error),
+        }
+        self.refresh_tools_if_missing();
+        self.pump();
+        self.pump_status_checks();
+    }
+
+    pub fn tags_written(&mut self, job_id: u64, result: Result<library::TaggedTrack, String>) {
+        let Some(job) = self.jobs.iter_mut().find(|j| j.id == job_id && j.is_running()) else { return };
+        let track = match result {
+            Ok(track) => track,
+            Err(error) => return self.job_validated(job_id, Err(error)),
+        };
+        let Some(file) = job.lookup_file.clone() else {
+            return self.job_validated(job_id, Err("The job has no FLAC file to tag".into()));
+        };
+        let set = |field: &mut Option<String>, value: &String| {
+            if !value.is_empty() {
+                *field = Some(value.clone());
+            }
+        };
+        set(&mut job.title, &track.title);
+        set(&mut job.artist, &track.artist);
+        set(&mut job.album, &track.album);
+        let cover = track.cover.map(|(path, bytes)| {
+            let path = path.to_string_lossy().into_owned();
+            job.cover = Some(path.clone());
+            (path, bytes)
+        });
+        let mut updated = false;
+        for entry in &mut self.history {
+            if entry.flac_file().and_then(|path| std::path::absolute(path).ok()).as_ref() != Some(&file) {
+                continue;
+            }
+            for (field, value) in [(&mut entry.title, &track.title), (&mut entry.artist, &track.artist), (&mut entry.album, &track.album)] {
+                if !value.is_empty() {
+                    field.clone_from(value);
+                }
+            }
+            if let Some((path, _)) = &cover {
+                entry.cover = Some(path.clone());
+            }
+            updated = true;
+        }
+        if let Some((path, bytes)) = cover {
+            self.load_image(path, bytes);
+        }
+        if updated {
+            self.save_history();
+        }
+        self.job_validated(job_id, Ok(vec![track.file]));
+    }
+
     pub fn download_placed(&mut self, job_id: u64, result: Result<Vec<String>, String>) {
         let Some(job) = self.jobs.iter_mut().find(|j| j.id == job_id && j.is_running()) else { return };
         let cancelled = job.cancelling;
         job.cancelling = false;
         job.stage = None;
         if cancelled {
-            if let Ok(files) = result {
-                for path in files {
-                    let _ = std::fs::remove_file(path);
-                }
-            }
             job.status = Status::Cancelled;
+            if let Ok(files) = result && !files.is_empty() {
+                self.background_opt(move || {
+                    for path in files {
+                        let _ = std::fs::remove_file(path);
+                    }
+                    None
+                });
+            }
             self.refresh_tools_if_missing();
             self.pump();
             self.pump_status_checks();
@@ -489,8 +632,7 @@ impl App {
         self.pump_status_checks();
     }
 
-    /// After a resolver ran: lists the services it found that an installed downloader takes,
-    /// best first (best downloader, then `SERVICES` order), and waits for the user to pick one.
+    /// Offers downloadable results, applying a service already chosen for the batch if available.
     fn offer_choices(&mut self, job_id: u64) {
         let Some(index) = self.jobs.iter().position(|j| j.id == job_id) else { return };
         let mut choices: Vec<(usize, usize, Choice)> = Vec::new();
@@ -523,6 +665,31 @@ impl App {
         }
         job.choices = choices.into_iter().map(|(_, _, c)| c).collect();
         job.status = Status::Choosing;
+        if self.importing == 0 {
+            self.apply_batch_service(index);
+        }
+    }
+
+    pub(crate) fn apply_waiting_batch_services(&mut self) {
+        let waiting: Vec<_> = self.jobs.iter()
+            .filter(|job| job.status == Status::Choosing && job.batch_service.is_some())
+            .map(|job| job.id).collect();
+        if waiting.is_empty() {
+            return;
+        }
+        for id in waiting {
+            self.offer_choices(id);
+        }
+        self.pump();
+    }
+
+    fn apply_batch_service(&mut self, index: usize) {
+        let job = &self.jobs[index];
+        let Some(service) = job.batch_service else { return };
+        let Some(choice) = job.choices.iter().find(|choice| choice.service == service) else { return };
+        let Some(downloader) = extensions::url_host(&choice.url)
+            .and_then(|host| self.selected_for(&host)).cloned() else { return };
+        self.queue_resolved_job(index, service, choice.url.clone(), downloader);
     }
 
     /// Hands a job waiting for a choice to the downloader of `choice` and queues it.
@@ -532,22 +699,27 @@ impl App {
         }
         let Some(index) = self.jobs.iter().position(|j| j.id == job_id && j.status == Status::Choosing) else { return };
         let Some(picked) = self.jobs[index].choices.get(choice).cloned() else { return };
-        let Some(downloader) = self.installed.iter().find(|i| i.manifest.id == picked.downloader).cloned() else {
+        let Some(downloader) = self.installed.iter().find(|i| i.manifest.id == picked.downloader
+            && !self.removing.contains(&i.manifest.id)).cloned() else {
             self.jobs[index].status = Status::Failed(format!("{} is no longer installed", picked.downloader_name));
             return;
         };
+        self.queue_resolved_job(index, picked.service, picked.url, downloader);
+        self.pump();
+    }
+
+    fn queue_resolved_job(&mut self, index: usize, service: &'static Service, url: String, downloader: Installed) {
         let picks = downloader.manifest.options.iter().map(|o| self.pick_index(&downloader.manifest.id, o)).collect();
         let job = &mut self.jobs[index];
         let resolver = job.extension.manifest.name.clone();
-        job.log.push(format!("{resolver}: chose {}, downloading with {}", picked.service.name, downloader.manifest.name));
+        job.log.push(format!("{resolver}: chose {}, downloading with {}", service.name, downloader.manifest.name));
         job.resolved = Some((resolver, job.service));
-        job.service = Some(picked.service);
-        job.url = picked.url;
+        job.service = Some(service);
+        job.url = url;
         job.picks = picks;
         job.extension = downloader;
         job.choices.clear();
         job.status = Status::Queued;
-        self.pump();
     }
 
     /// Adds a finished job to the history and finds its cover when it has none yet.
@@ -570,6 +742,14 @@ impl App {
         };
         let flac = job.saved.iter().find(|f| f.to_lowercase().ends_with(".flac")).cloned();
         let needs_cover = job.cover.is_none();
+        let auto_tag = job.auto_tag;
+        if auto_tag
+            && let Some(tagger) = self.tag_writer_for(&entry.url).cloned()
+            && let Some(tag_job) = self.lookup_job(&entry, tagger)
+        {
+            let next = self.jobs.iter().position(|job| job.status == Status::Queued).unwrap_or(self.jobs.len());
+            self.jobs.insert(next, tag_job);
+        }
         self.history.insert(0, entry);
         self.save_history();
         self.refresh_library_files();
@@ -580,6 +760,23 @@ impl App {
                 library::cover_from_flac(&paths, &PathBuf::from(flac)).map(|(path, bytes)| Msg::JobCover(job_id, path, bytes))
             });
         }
+    }
+
+    pub fn download_tag_writers(&self) -> impl Iterator<Item = &Installed> {
+        self.installed.iter().filter(|extension| {
+            let manifest = &extension.manifest;
+            manifest.can_write_tags() && !self.removing.contains(&manifest.id)
+                && !manifest.hosts.is_empty()
+                && extension.executable().is_some()
+        })
+    }
+
+    fn tag_writer_for(&self, url: &str) -> Option<&Installed> {
+        let host = extensions::url_host(url)?;
+        let mut matches = self.download_tag_writers()
+            .filter(|extension| extensions::host_matches(&extension.manifest.hosts, &host));
+        let writer = matches.next()?;
+        matches.next().is_none().then_some(writer)
     }
 
     pub fn job_cover(&mut self, job_id: u64, path: PathBuf, bytes: Vec<u8>) {

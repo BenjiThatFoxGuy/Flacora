@@ -3,6 +3,7 @@
 //! resolvers print `links` and status checks print `services`.
 //! Everything else an extension prints is plain log text.
 
+use crate::{extensions, services};
 use serde_json::Value;
 
 pub const PREFIX: &str = "@flacora ";
@@ -50,7 +51,12 @@ pub fn parse(line: &str) -> Option<Event> {
             json["links"]
                 .as_object()?
                 .iter()
-                .filter_map(|(service, url)| Some((service.clone(), https_url(url.as_str()?)?)))
+                .filter_map(|(service, url)| {
+                    let url = https_url(url.as_str()?)?;
+                    let excluded = services::is_excluded_service(service)
+                        || extensions::url_host(&url).is_some_and(|host| services::is_excluded_host(&host));
+                    (!excluded).then(|| (service.clone(), url))
+                })
                 .collect(),
         ),
         "services" => Event::Services(
@@ -58,8 +64,9 @@ pub fn parse(line: &str) -> Option<Event> {
                 .as_array()?
                 .iter()
                 .filter_map(|s| s.as_str())
-                .map(|s| s.trim().to_owned())
-                .filter(|s| !s.is_empty())
+                .map(str::trim)
+                .filter(|s| !s.is_empty() && !services::is_excluded_service(s))
+                .map(str::to_owned)
                 .collect(),
         ),
         _ => return None,
@@ -97,9 +104,9 @@ mod tests {
         assert_eq!(parse(r#"@flacora {"event":"saved","path":"C:\\a.flac"}"#), Some(Event::Saved("C:\\a.flac".into())));
         assert_eq!(parse(r#"@flacora {"event":"cover","cover":"http://insecure"}"#), None);
         assert_eq!(parse("Track: HUNTR/X - Golden"), None);
-        let links = parse(r#"@flacora {"event":"links","links":{"Tidal":"https://tidal.com/track/1","Bad":"http://x"}}"#);
+        let links = parse(r#"@flacora {"event":"links","links":{"Tidal":"https://tidal.com/track/1","Bad":"http://x","Yandex Music":"https://example.com/track/1","Unknown":"https://music.yandex.ru/track/1","Pandora":"https://example.org/track/1","Other":"https://www.pandora.com./TR:1"}}"#);
         assert_eq!(links, Some(Event::Links(vec![("Tidal".into(), "https://tidal.com/track/1".into())])));
-        let services = parse(r#"@flacora {"event":"services","services":["Qobuz","Amazon Music"]}"#);
+        let services = parse(r#"@flacora {"event":"services","services":["Qobuz"," Yandex Music ","Pandora","Amazon Music"]}"#);
         assert_eq!(services, Some(Event::Services(vec!["Qobuz".into(), "Amazon Music".into()])));
         let insecure = parse(r#"@flacora {"event":"track","title":"a","cover":"http://x"}"#);
         assert!(matches!(insecure, Some(Event::Track { cover: None, .. })));

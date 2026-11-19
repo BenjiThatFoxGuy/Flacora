@@ -12,7 +12,7 @@ pub use theme::FONT;
 
 use crate::app::{App, Notification, NotificationKind, Page};
 use crate::{icons, store};
-use rune::{Cursor, Cx, El, Icon, Image, ImageCache, SurfaceFit, Transition, col, el, icon, row, text};
+use rune::{Chord, ChordKey, ChordMod, Cursor, Cx, El, Icon, Image, ImageCache, SurfaceFit, Transition, col, el, icon, row, text};
 use rune_kit::{Divider, Kit, Sidebar, SidebarRow, Toast, ToastRegion};
 
 pub const SIDEBAR: f32 = 232.0;
@@ -50,11 +50,13 @@ pub fn project_logos(cache: &ImageCache) -> [Image; 2] {
 
 pub fn view(s: &App, cx: &mut Cx<App>) -> El {
     let k = theme::kit(s.dark(cx.system_dark()));
+    // Keep the region mounted while its last notification fades out.
+    let mut overlays = vec![notifications(s, k)];
     let page = match s.page {
-        Page::Downloads => downloads::page(s, k),
+        Page::Downloads => downloads::page(s, k, &mut overlays),
         Page::Catalog => catalog::page(s, k),
         Page::Library => library::page(s, k),
-        Page::Extensions => extensions::page(s, k),
+        Page::Extensions => extensions::page(s, k, &mut overlays),
         Page::Settings => settings::page(s, k),
     };
     let content = col().key("content").grow(1.0).shrink().min_w(0.0).h_full().items_center().child(page);
@@ -71,8 +73,6 @@ pub fn view(s: &App, cx: &mut Cx<App>) -> El {
         .accepts_extensions(&store::PACKAGE_EXTENSIONS)
         .on_drop_hover(|s: &mut App, over, _| s.drop_over = over)
         .on_drop_rejected(|s: &mut App, files, _| s.reject_files(files));
-    // Keep the region mounted while its last notification fades out.
-    let mut overlays = vec![notifications(s, k)];
     let empty_extensions = s.page == Page::Extensions && s.loaded && s.installed.is_empty();
     if s.drop_over && !empty_extensions {
         overlays.push(drop_overlay(k));
@@ -115,11 +115,8 @@ fn sidebar(s: &App, k: &Kit) -> El {
     let mut sidebar = Sidebar::new().inset(12.0).header_padding(16.0, 16.0).row_gap(4.0).label("Pages").header(brand);
     for (index, (page, glyph, label, badge)) in items.into_iter().enumerate() {
         let selected = s.page == page;
-        let shortcut = if cfg!(target_os = "macos") {
-            format!("Cmd+{}", index + 1)
-        } else {
-            format!("Ctrl+{}", index + 1)
-        };
+        let digit = char::from_digit((index + 1) as u32, 10).expect("sidebar index digit");
+        let shortcut = Chord::new(ChordKey::Char(digit)).with(ChordMod::Primary).label();
         let mut item = SidebarRow::new(label)
             .icon(glyph)
             .height(SIDEBAR_ROW_HEIGHT)
@@ -127,11 +124,9 @@ fn sidebar(s: &App, k: &Kit) -> El {
             .title_style(if selected { k.ty.body_medium } else { k.ty.ui })
             .on_select(move |s: &mut App, _| {
                 s.page = page;
-                s.confirm_action = None;
+                s.dismiss_page_overlays();
                 if page == Page::Library {
                     s.refresh_library_files();
-                } else if page == Page::Catalog {
-                    s.enter_catalog();
                 }
             });
         if let Some(badge) = badge {
@@ -155,15 +150,16 @@ fn sidebar(s: &App, k: &Kit) -> El {
     let mut footer = col().w_full().gap(2.0).pb(8.0);
     if let Some(release) = &s.available_update {
         let url = release.url.clone();
-        footer = footer.child(widgets::status_badge(k, &icons::CIRCLE_CHECK, "Update Available", Some(k.c.success))
-            .key("sidebar-update")
+        footer = footer.child(row().h(28.0).center().radius(10.0)
+            .key("sidebar-update").label("Update Available")
             .self_start().ml(6.0).mb(4.0)
             .role("link").focusable(true)
             .help(format!("Open Flacora v{} on GitHub", release.version))
             .cursor(Cursor::Pointer)
-            .hover(k.c.success.bg.alpha(0.75))
-            .focus_ring(2.0, 2.0, k.c.border_focus)
-            .on_press_tx(move |s, tx| open_footer_url(s, tx, url.as_str())));
+            .hover(k.c.hover)
+            .focus_ring(theme::FOCUS_RING_WIDTH, theme::FOCUS_RING_OFFSET, k.c.border_focus)
+            .on_press_tx(move |s, tx| open_footer_url(s, tx, url.as_str()))
+            .child(widgets::status_badge(k, &icons::CIRCLE_CHECK, "Update Available", Some(k.c.success)).a11y_hidden()));
     }
     let footer = footer.child(coffee).child(project_shortcuts(s, k));
     sidebar.footer(footer).build(k).w(SIDEBAR).fill(k.c.bg_base)
@@ -196,7 +192,7 @@ fn project_shortcuts(s: &App, k: &Kit) -> El {
 fn footer_link(k: &Kit, key: String, label: String, url: &'static str) -> El {
     row().key(key).role("link").label(label.clone()).help(label).focusable(true)
         .h(30.0).px(8.0).center_y().radius(k.radius.md)
-        .cursor(Cursor::Pointer).hover(k.c.hover).focus_ring(2.0, 2.0, k.c.border_focus)
+        .cursor(Cursor::Pointer).hover(k.c.hover).focus_ring(theme::FOCUS_RING_WIDTH, theme::FOCUS_RING_OFFSET, k.c.border_focus)
         .on_press_tx(move |s, tx| open_footer_url(s, tx, url))
 }
 
@@ -239,6 +235,7 @@ fn notification(k: &Kit, key: &str, note: &Notification, has_undo: bool, dismiss
         .border(1.0, colors.border.alpha(0.28))
         .radius(theme::CARD_RADIUS)
         .transition(Transition::opacity())
+        .on_hover_change(|s: &mut App, inside, _| s.toast_hovered = inside)
 }
 
 fn drop_overlay(k: &Kit) -> El {

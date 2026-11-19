@@ -12,6 +12,8 @@ pub const PAGE_INSET: f32 = 24.0;
 pub const PAGE_CONTENT_MAX_WIDTH: f32 = 1120.0;
 pub const CARD_RADIUS: f32 = 12.0;
 pub const CARD_PADDING: f32 = 12.0;
+pub const FOCUS_RING_WIDTH: f32 = 2.0;
+pub const FOCUS_RING_OFFSET: f32 = 2.0;
 pub const HEADING: TextStyle = TextStyle::new(24.0, 600.0).lh(32.0);
 pub const SUBHEADING: TextStyle = TextStyle::new(17.0, 700.0).lh(24.0);
 
@@ -30,6 +32,21 @@ pub fn segmented_kit(dark: bool) -> &'static Kit {
         let mut k = kit(dark).clone();
         k.c.border_base = Color::TRANSPARENT;
         k.c.border_strong = Color::TRANSPARENT;
+        if dark {
+            // Astryx neutralTheme.ts segmented-control-item dark contrast stop (neutral.dark[80]).
+            k.c.text_muted = rune::color::hex("#c6c6c6").expect("Astryx color");
+        }
+        k
+    })
+}
+
+pub fn danger_button_kit(dark: bool) -> &'static Kit {
+    static DARK: OnceLock<Kit> = OnceLock::new();
+    static LIGHT: OnceLock<Kit> = OnceLock::new();
+    let cache = if dark { &DARK } else { &LIGHT };
+    cache.get_or_init(|| {
+        let mut k = kit(dark).clone();
+        k.c.border_focus = k.c.danger.border;
         k
     })
 }
@@ -62,7 +79,6 @@ pub fn toast_kit(dark: bool, kind: crate::app::NotificationKind) -> &'static Kit
             k.c.text_muted = colors.fg;
             k.c.icon_muted = colors.icon;
             k.c.border_focus = colors.fg;
-            k.elevation.floating.clear();
             k
         })
     });
@@ -75,16 +91,16 @@ pub fn toast_kit(dark: bool, kind: crate::app::NotificationKind) -> &'static Kit
 
 fn build(dark: bool) -> Kit {
     let color = |light, night| rune::color::hex(if dark { night } else { light }).expect("Astryx color");
-    let body = color("#f1f1f1", "#141414");
-    let surface = color("#ffffff", "#191919");
-    let card = color("#ffffff", "#1e1e1e");
+    let body = color("#f1f1f1", "#1b1b1b");
+    let surface = color("#ffffff", "#262626");
+    let card = color("#ffffff", "#262626");
     let text = color("#000000", "#ffffff");
     let secondary = color("#474747", "#9e9e9e");
     let icon_secondary = color("#6a6a6a", "#9e9e9e");
     let accent = color("#1b1b1b", "#f1f1f1");
     let on_accent = color("#ffffff", "#111111");
-    let selected = color("#d4d4d4", "#3d3d3d");
-    let gray = color("#e2e2e2", "#2b2b2b");
+    let selected = color("#d4d4d4", "#474747");
+    let gray = color("#e2e2e2", "#303030");
     let border = text.alpha(if dark { 0.10 } else { 0.08 });
     let emphasized = color("#d4d4d4", "#525252");
     let hover = text.alpha(0.05);
@@ -166,6 +182,9 @@ fn build(dark: bool) -> Kit {
         Shadow { y: 2.0, blur: 4.0, color: Color::BLACK.alpha(if dark { 0.25 } else { 0.05 }), ..Shadow::default() },
         Shadow { y: 4.0, blur: 8.0, color: Color::BLACK.alpha(if dark { 0.40 } else { 0.10 }), ..Shadow::default() },
     ];
+    if dark {
+        k.elevation.floating.push(Shadow { spread: 1.0, color: Color::WHITE.alpha(0.08), inset: true, ..Shadow::default() });
+    }
     k.elevation = k.elevation.with_input(vec![Shadow { spread: 1.0, color: emphasized, inset: true, ..Shadow::default() }]);
     k.radius = Radius { xs: 6.0, sm: 10.0, md: 10.0, lg: 10.0, xl: 10.0 };
     k.ty = Type {

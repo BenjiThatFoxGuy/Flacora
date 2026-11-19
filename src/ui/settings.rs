@@ -12,11 +12,15 @@ use rune_kit::{Button, ButtonVariant, ControlSize, Divider, Kit, SegmentedContro
 
 pub fn page(s: &App, k: &Kit) -> El {
     let head = widgets::page_header(k, "Settings", "Where downloads go, how Flacora looks, and which extension handles each service.", vec![]);
+    let mut downloads = vec![folder_row(s, k), filename_row(s, k), folders_row(s, k), preview_row(s, k)];
+    if s.download_tag_writers().next().is_some() {
+        downloads.push(auto_tag_row(s, k));
+    }
     let body = col()
         .key("settings-list")
         .gap(10.0)
         .child(section(k, "Downloads", None))
-        .child(group(k, "group-downloads", vec![folder_row(s, k), filename_row(s, k), folders_row(s, k), preview_row(s, k)]))
+        .child(group(k, "group-downloads", downloads))
         .child(section(k, "Appearance", None))
         .child(group(k, "group-appearance", vec![theme_row(s, k)]))
         .child(section(k, "Default Extension", None))
@@ -107,6 +111,7 @@ fn filename_row(s: &App, k: &Kit) -> El {
     let selected = Filename::ALL.iter().position(|value| *value == s.settings.layout.filename);
     setting(k, "setting-filename", "File Name", muted(k, "Choose how new audio files are named."),
         widgets::segmented(k, "filename", SegmentedControl::new(&labels, selected)
+            .label("File Name")
             .on_pick(|s: &mut App, i: usize, _: &mut Tx| {
                 s.set_output_layout(Layout { filename: Filename::ALL[i], ..s.settings.layout });
             })))
@@ -117,6 +122,7 @@ fn folders_row(s: &App, k: &Kit) -> El {
     let selected = Folders::ALL.iter().position(|value| *value == s.settings.layout.folders);
     setting(k, "setting-folders", "Folder Organization", muted(k, "Group new downloads inside the selected folder."),
         widgets::segmented(k, "folders", SegmentedControl::new(&labels, selected)
+            .label("Folder Organization")
             .on_pick(|s: &mut App, i: usize, _: &mut Tx| {
                 s.set_output_layout(Layout { folders: Folders::ALL[i], ..s.settings.layout });
             })))
@@ -144,6 +150,33 @@ fn preview_row(s: &App, k: &Kit) -> El {
         )
 }
 
+fn auto_tag_row(s: &App, k: &Kit) -> El {
+    let label = "Automatically Tag Downloads";
+    let on = s.settings.auto_tag;
+    let thumb = if on { 20.0 } else { 16.0 };
+    let inset = (24.0 - thumb) / 2.0;
+    let track = el().key("track").size(40.0, 24.0).radius(12.0)
+        .fill(if on { k.c.bg_accent } else { k.c.border_strong })
+        .child(el().key("thumb").size(thumb, thumb).radius(thumb / 2.0)
+            .absolute(if on { 40.0 - thumb - inset } else { inset }, inset)
+            .fill(k.c.bg_base))
+        .a11y_hidden();
+    setting(k, "setting-auto-tag", label,
+        muted(k, "Update tags and cover art on new FLACs with a matching Web extension."),
+        row().key("auto-tag")
+            .role("switch")
+            .label(label)
+            .checked(on)
+            .focusable(true)
+            .focus_ring(super::theme::FOCUS_RING_WIDTH, super::theme::FOCUS_RING_OFFSET, k.c.border_focus)
+            .cursor(Cursor::Pointer)
+            .radius(k.radius.xs)
+            .min_h(28.0)
+            .center()
+            .on_press(App::toggle_auto_tag)
+            .child(track))
+}
+
 fn layout_preview(output: &std::path::Path, layout: Layout) -> String {
     let file = match layout.filename {
         Filename::ExtensionDefault | Filename::ArtistTitle => "HUNTR_X - Golden.flac",
@@ -167,6 +200,7 @@ fn theme_row(s: &App, k: &Kit) -> El {
         "Theme",
         muted(k, "Follow the system, or always use light or dark."),
         widgets::segmented(k, "theme", SegmentedControl::new(&labels, current)
+            .label("Theme")
             .on_pick(|s: &mut App, i: usize, _: &mut Tx| s.set_theme(Theme::ALL[i])))
             .w(248.0),
     )
@@ -175,7 +209,7 @@ fn theme_row(s: &App, k: &Kit) -> El {
 /// One row per service that two or more installed extensions can handle.
 fn default_rows(s: &App, k: &Kit) -> Vec<El> {
     let mut rows = Vec::new();
-    for service in &SERVICES[..crate::services::LOSSLESS] {
+    for service in &SERVICES[..crate::services::PRIMARY_DOWNLOAD_COUNT] {
         let candidates = s.installed_downloaders_for(service.primary_host());
         if candidates.len() < 2 {
             continue;
@@ -193,7 +227,7 @@ fn default_rows(s: &App, k: &Kit) -> Vec<El> {
             &format!("setting-default-{}", service.key),
             service.name,
             muted(k, format!("{} extensions can download from {}.", candidates.len(), service.name)),
-            default_picker(k, &format!("default-{}", service.key), &labels, current, ids, key),
+            default_picker(k, &format!("default-{}", service.key), service.name, &labels, current, ids, key),
         ));
     }
     // The resolver to use when two or more are installed.
@@ -212,7 +246,7 @@ fn default_rows(s: &App, k: &Kit) -> Vec<El> {
             "setting-default-resolver",
             Kind::Resolver.label(),
             muted(k, "Finds Spotify, Apple Music and YouTube tracks on a service you can download from.".to_owned()),
-            default_picker(k, "default-resolver", &labels, current, ids, RESOLVER_KEY.to_owned()),
+            default_picker(k, "default-resolver", Kind::Resolver.label(), &labels, current, ids, RESOLVER_KEY.to_owned()),
         ));
     }
     if rows.is_empty() {
@@ -228,18 +262,23 @@ fn default_rows(s: &App, k: &Kit) -> Vec<El> {
 }
 
 /// Uses a segmented control for 2-3 options, and wraps cleanly as pills when many extensions share a service.
-fn default_picker(k: &Kit, key: &str, labels: &[String], current: usize, ids: Vec<String>, pref_key: String) -> El {
+fn default_picker(k: &Kit, key: &str, group_label: &str, labels: &[String], current: usize, ids: Vec<String>, pref_key: String) -> El {
     if labels.len() <= 3 {
         return widgets::segmented(
             k,
             key,
             SegmentedControl::new(labels, Some(current))
+                .label(group_label)
                 .on_pick(move |s: &mut App, i: usize, _: &mut Tx| s.set_preferred(&pref_key, i.checked_sub(1).and_then(|i| ids.get(i).cloned()))),
         );
     }
+    let seg_k = super::theme::segmented_kit(k.dark);
+    let count = labels.len();
     let mut group = row()
         .key(key.to_owned())
         .role("radiogroup")
+        .label(group_label.to_owned())
+        .focus_group()
         .gap(4.0)
         .flex_wrap()
         .max_w(520.0);
@@ -251,10 +290,13 @@ fn default_picker(k: &Kit, key: &str, labels: &[String], current: usize, ids: Ve
             .key(format!("segment{i}"))
             .role("radio")
             .label(label.clone())
+            .checked(selected)
+            .position_in_set(i + 1, count)
             .focusable(true)
-            .focus_ring(2.0, 1.0, k.c.border_focus)
+            .focus_selected(selected)
+            .focus_ring(super::theme::FOCUS_RING_WIDTH, super::theme::FOCUS_RING_OFFSET, k.c.border_focus)
             .cursor(Cursor::Pointer)
-            .h(26.0)
+            .h(28.0)
             .px(10.0)
             .center()
             .radius(k.radius.xs)
@@ -264,7 +306,7 @@ fn default_picker(k: &Kit, key: &str, labels: &[String], current: usize, ids: Ve
             .child(
                 text(label.clone())
                     .font(if selected { k.ty.small_medium } else { k.ty.small })
-                    .color(if selected { k.c.text_strong } else { k.c.text_muted })
+                    .color(if selected { k.c.text_strong } else { seg_k.c.text_muted })
                     .a11y_hidden(),
             );
         group = group.child(pill);

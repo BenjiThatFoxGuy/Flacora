@@ -2,7 +2,7 @@
   {
     "id": "amazon-web",
     "name": "Amazon Music Web",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "kind": "metadata",
     "description": "music.amazon.com",
     "services": [
@@ -22,6 +22,7 @@
       "{url}"
     ],
     "catalog": true,
+    "writes_tags": true,
     "hosts": [
       "music.amazon.com",
       "music.amazon.co.uk",
@@ -101,7 +102,7 @@
   {
     "id": "deezer-web",
     "name": "Deezer Web",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "kind": "metadata",
     "description": "deezer.com",
     "services": [
@@ -121,6 +122,7 @@
       "{url}"
     ],
     "catalog": true,
+    "writes_tags": true,
     "hosts": [
       "deezer.com"
     ]
@@ -284,22 +286,19 @@
   {
     "id": "lucida",
     "name": "Lucida",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "description": "lucida.to",
     "services": [
       "Amazon Music",
       "Qobuz",
       "Tidal",
-      "Deezer",
-      "Yandex Music"
+      "Deezer"
     ],
     "hosts": [
       "music.amazon.com",
       "qobuz.com",
       "tidal.com",
-      "deezer.com",
-      "music.yandex.ru",
-      "music.yandex.com"
+      "deezer.com"
     ],
     "executable": {
       "windows-x64": "lucida.exe",
@@ -460,7 +459,7 @@
   {
     "id": "odesli",
     "name": "Odesli",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "kind": "resolver",
     "description": "odesli.co",
     "services": [
@@ -479,7 +478,6 @@
       "geo.music.apple.com",
       "youtube.com",
       "youtu.be",
-      "pandora.com",
       "audius.co",
       "anghami.com",
       "boomplay.com",
@@ -489,8 +487,6 @@
       "deezer.com",
       "deezer.page.link",
       "music.amazon.com",
-      "music.yandex.ru",
-      "music.yandex.com",
       "song.link",
       "odesli.co",
       "album.link"
@@ -577,7 +573,7 @@
   {
     "id": "qobuz-web",
     "name": "Qobuz Web",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "kind": "metadata",
     "description": "qobuz.com",
     "services": [
@@ -597,6 +593,7 @@
       "{url}"
     ],
     "catalog": true,
+    "writes_tags": true,
     "hosts": [
       "qobuz.com"
     ]
@@ -604,7 +601,7 @@
   {
     "id": "spotify-web",
     "name": "Spotify Web",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "kind": "metadata",
     "description": "open.spotify.com",
     "services": [
@@ -624,6 +621,7 @@
       "{url}"
     ],
     "catalog": true,
+    "writes_tags": true,
     "status": [
       "--status"
     ],
@@ -675,7 +673,7 @@
   {
     "id": "tidal-web",
     "name": "Tidal Web",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "kind": "metadata",
     "description": "tidal.com",
     "services": [
@@ -695,8 +693,62 @@
       "{url}"
     ],
     "catalog": true,
+    "writes_tags": true,
     "hosts": [
       "tidal.com"
+    ]
+  },
+  {
+    "id": "apple-web",
+    "name": "Apple Music Web",
+    "version": "1.0.0",
+    "kind": "metadata",
+    "description": "music.apple.com",
+    "services": [
+      "Apple Music"
+    ],
+    "executable": {
+      "windows-x64": "apple-web.exe",
+      "windows-arm64": "apple-web.exe",
+      "linux-x64": "apple-web",
+      "linux-arm64": "apple-web",
+      "macos-arm64": "apple-web",
+      "macos-x64": "apple-web"
+    },
+    "args": [
+      "{file}"
+    ],
+    "catalog": true,
+    "catalog_only": true,
+    "hosts": [
+      "music.apple.com",
+      "itunes.apple.com"
+    ]
+  },
+  {
+    "id": "ytmusic-web",
+    "name": "YouTube Music Web",
+    "version": "1.0.0",
+    "kind": "metadata",
+    "description": "music.youtube.com",
+    "services": [
+      "YouTube Music"
+    ],
+    "executable": {
+      "windows-x64": "ytmusic-web.exe",
+      "windows-arm64": "ytmusic-web.exe",
+      "linux-x64": "ytmusic-web",
+      "linux-arm64": "ytmusic-web",
+      "macos-arm64": "ytmusic-web",
+      "macos-x64": "ytmusic-web"
+    },
+    "args": [
+      "{file}"
+    ],
+    "catalog": true,
+    "catalog_only": true,
+    "hosts": [
+      "music.youtube.com"
     ]
   }
 ]

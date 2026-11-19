@@ -56,6 +56,18 @@ fn manifest_parses_with_options_and_defaults() {
 }
 
 #[test]
+fn old_manifests_drop_excluded_services_while_retaining_other_routes() {
+    let mut data = crate::fixtures::manifest_json("lucida").clone();
+    data["hosts"].as_array_mut().unwrap().push("music.yandex.ru".into());
+    data["hosts"].as_array_mut().unwrap().push("www.pandora.com".into());
+    data["services"].as_array_mut().unwrap().push("Yandex Music".into());
+    data["services"].as_array_mut().unwrap().push("Pandora".into());
+    let manifest = parse_manifest(&data.to_string()).unwrap();
+    assert_eq!(manifest.services, ["Amazon Music", "Qobuz", "Tidal", "Deezer"]);
+    assert_eq!(manifest.hosts, ["music.amazon.com", "qobuz.com", "tidal.com", "deezer.com"]);
+}
+
+#[test]
 fn command_line_fills_placeholders_and_option_args() {
     let m = parse_manifest(MANIFEST).unwrap();
     let args = command_args(&m, &fill(), &[0]);

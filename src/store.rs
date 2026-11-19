@@ -114,6 +114,7 @@ impl Theme {
 pub struct Settings {
     pub output: PathBuf,
     pub layout: crate::output::Layout,
+    pub auto_tag: bool,
     pub theme: Theme,
     /// Extension id to use per service key, when several are installed.
     pub preferred: BTreeMap<String, String>,
@@ -124,7 +125,7 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Settings {
-            output: default_output(), layout: crate::output::Layout::default(), theme: Theme::System,
+            output: default_output(), layout: crate::output::Layout::default(), auto_tag: false, theme: Theme::System,
             preferred: BTreeMap::new(), options: BTreeMap::new(),
         }
     }
@@ -154,6 +155,7 @@ pub fn load_settings(paths: &Paths) -> Settings {
     Settings {
         output: json["output"].as_str().map(PathBuf::from).unwrap_or_else(default_output),
         layout: serde_json::from_value(json["layout"].clone()).unwrap_or_default(),
+        auto_tag: json["auto_tag"].as_bool().unwrap_or_default(),
         theme: Theme::ALL.into_iter().find(|t| json["theme"].as_str() == Some(t.key())).unwrap_or_default(),
         preferred: map("preferred"),
         options: map("options"),
@@ -165,6 +167,7 @@ pub fn save_settings(paths: &Paths, settings: &Settings) -> Result<(), String> {
     let json = serde_json::json!({
         "output": settings.output.to_string_lossy(),
         "layout": settings.layout,
+        "auto_tag": settings.auto_tag,
         "theme": settings.theme.key(),
         "preferred": settings.preferred,
         "options": settings.options,
@@ -457,6 +460,9 @@ pub fn install_file(paths: &Paths, package: &Path, can_replace: impl Fn(&str) ->
     let manifest = extensions::parse_manifest(
         &fs::read_to_string(&manifest_path).map_err(|_| "This package has no extension.json".to_string())?,
     )?;
+    if let Some(message) = manifest.tag_writer_update() {
+        return Err(message);
+    }
     if let Some(new) = extensions::web_replacement(&manifest.id)
         && paths.extension(new).join("extension.json").is_file()
     {

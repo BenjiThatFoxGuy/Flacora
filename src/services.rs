@@ -15,15 +15,13 @@ impl Service {
     }
 }
 
-/// The first six have lossless downloads, best first: a resolved link goes to the first of
-/// them a downloader takes. The rest are only links Odesli can resolve. YouTube Music comes
-/// before YouTube so its host matches first.
-pub const SERVICES: [Service; 10] = [
+/// The primary download services come first, followed by the optional Monochrome source and
+/// resolver input services. YouTube Music comes before YouTube so its host matches first.
+pub const SERVICES: [Service; 9] = [
     Service { key: "qobuz", name: "Qobuz", hosts: &["qobuz.com"] },
     Service { key: "tidal", name: "Tidal", hosts: &["tidal.com"] },
     Service { key: "deezer", name: "Deezer", hosts: &["deezer.com", "deezer.page.link"] },
     Service { key: "amazon", name: "Amazon Music", hosts: &["music.amazon.com", "music.amazon.co.uk", "music.amazon.de", "music.amazon.co.jp"] },
-    Service { key: "yandex", name: "Yandex Music", hosts: &["music.yandex.ru", "music.yandex.com"] },
     Service { key: "monochrome", name: "Monochrome", hosts: &["monochrome.st"] },
     Service { key: "spotify", name: "Spotify", hosts: &["open.spotify.com", "spotify.link"] },
     Service { key: "apple", name: "Apple Music", hosts: &["music.apple.com", "geo.music.apple.com", "itunes.apple.com"] },
@@ -31,8 +29,16 @@ pub const SERVICES: [Service; 10] = [
     Service { key: "youtube", name: "YouTube", hosts: &["youtube.com", "youtu.be"] },
 ];
 
-/// How many of `SERVICES` can be downloaded from.
-pub const LOSSLESS: usize = 6;
+/// How many of `SERVICES` appear in the primary download settings.
+pub const PRIMARY_DOWNLOAD_COUNT: usize = 4;
+
+pub fn is_excluded_host(host: &str) -> bool {
+    host_matches(&["music.yandex.ru", "music.yandex.com", "pandora.com"], host.trim_end_matches('.'))
+}
+
+pub fn is_excluded_service(name: &str) -> bool {
+    ["yandex", "Yandex Music", "Pandora"].iter().any(|known| name.trim().eq_ignore_ascii_case(known))
+}
 
 /// Embedded artwork for music services.
 pub const LOGOS: [(&str, &[u8]); 7] = [
@@ -70,7 +76,11 @@ mod tests {
         assert_eq!(detect("open.spotify.com").map(|s| s.key), Some("spotify"));
         assert_eq!(detect("geo.music.apple.com").map(|s| s.key), Some("apple"));
         assert_eq!(by_name("Amazon Music").map(|s| s.key), Some("amazon"));
-        for service in &SERVICES[..LOSSLESS] {
+        assert!(detect("music.yandex.ru").is_none());
+        assert!(by_name("Yandex Music").is_none());
+        let primary: Vec<_> = SERVICES[..PRIMARY_DOWNLOAD_COUNT].iter().map(|service| service.key).collect();
+        assert_eq!(primary, ["qobuz", "tidal", "deezer", "amazon"]);
+        for service in &SERVICES[..PRIMARY_DOWNLOAD_COUNT] {
             assert_eq!(detect(service.primary_host()).map(|s| s.key), Some(service.key));
         }
     }

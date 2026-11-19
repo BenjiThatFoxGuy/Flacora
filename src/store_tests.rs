@@ -29,12 +29,14 @@ fn musicbrainz_retries_respect_the_api_interval_and_retry_after() {
 }
 
 #[test]
-fn download_layout_is_persisted_and_defaults_for_old_settings() {
+fn download_layout_and_automatic_tagging_default_for_old_settings_and_persist() {
     let (_guard, paths) = temp_root("layout");
     fs::write(paths.settings(), r#"{"output":"test-downloads"}"#).unwrap();
     let mut settings = load_settings(&paths);
     assert_eq!(settings.layout, crate::output::Layout::default());
+    assert!(!settings.auto_tag);
     settings.layout = crate::output::Layout { filename: crate::output::Filename::TitleArtist, folders: crate::output::Folders::ArtistAlbum };
+    settings.auto_tag = true;
     save_settings(&paths, &settings).unwrap();
     assert_eq!(load_settings(&paths), settings);
 }
@@ -122,6 +124,24 @@ fn a_package_file_installs_and_a_newer_one_replaces_it() {
     assert!(error.contains("Could not decrypt this package"), "{error}");
     assert_eq!(load_installed(&paths)[0].manifest.version, "0.2.0");
     assert_eq!(fs::read_dir(paths.extensions()).unwrap().count(), 1);
+}
+
+#[test]
+fn web_packages_below_the_tag_writer_minimum_are_refused() {
+    let (_guard, paths) = temp_root("tag-writer-version");
+    let mut manifest = crate::fixtures::manifest_json("tidal-web").clone();
+    for version in ["1.0.0", "1.0.1-rc.1"] {
+        manifest["version"] = version.into();
+        manifest["writes_tags"] = false.into();
+        let old = package_with_manifest(&paths.root, version, &manifest.to_string(), true);
+        assert!(install_file(&paths, &old, |_| true).unwrap_err().contains("v1.0.1"));
+        assert!(load_installed(&paths).is_empty());
+    }
+    manifest["version"] = "1.0.1".into();
+    manifest["writes_tags"] = true.into();
+    let current = package_with_manifest(&paths.root, "1.0.1", &manifest.to_string(), true);
+    let installed = install_file(&paths, &current, |_| true).unwrap();
+    assert!(installed.manifest.can_write_tags());
 }
 
 #[test]

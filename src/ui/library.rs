@@ -7,8 +7,9 @@ use crate::icons;
 use crate::jobs::now;
 use crate::library::Entry;
 use crate::services;
-use rune::{Cursor, El, Tx, col, icon, row, text};
-use rune_kit::{Button, ButtonVariant, ControlSize, Divider, Kit, SegmentedControl, TextInput};
+use rune::{Cursor, El, GrowthSpec, Tx, col, el, icon, row, text};
+use rune_kit::{ButtonVariant, Collapsible, Divider, Kit, SegmentedControl, TextInput};
+use std::{borrow::Cow, rc::Rc};
 
 pub fn page(s: &App, k: &Kit) -> El {
     let mut actions = Vec::new();
@@ -20,14 +21,17 @@ pub fn page(s: &App, k: &Kit) -> El {
             .height(32.0)
             .on_edit(|s: &mut App| &mut s.search);
         if !s.search.text.is_empty() {
-            search = search.clear_button();
+            search = search.trailing(
+                widgets::clear_input_button(k, "search", "Clear Search", |s| &mut s.search)
+                    .key("library-clear-search"),
+            );
         }
         actions.push(search.build(k).key("search"));
         actions.push(widgets::button(k, "clear-history", "Clear", Some(&icons::TRASH_2), ButtonVariant::Danger, |s: &mut App| s.clear_history()));
     }
     let entries = s.filtered_history();
     let count = s.history.len();
-    let filtering = !s.search.text.trim().is_empty() || s.library_service.is_some();
+    let filtering = !s.search.text.trim().is_empty() || s.active_library_service().is_some();
     let subtitle = if count == 0 {
         "Your finished downloads appear here.".to_string()
     } else if filtering {
@@ -67,29 +71,21 @@ fn toolbar(s: &App, k: &Kit) -> El {
             services.push(name.to_owned());
         }
     }
-    let mut filters = row().key("library-filters").gap(6.0).center_y().flex_wrap().grow(1.0).min_w(0.0);
-    if services.len() > 1 {
-        let all_selected = s.library_service.is_none();
-        filters = filters.child(
-            Button::new("All")
-                .variant(if all_selected { ButtonVariant::Submit } else { ButtonVariant::Outline })
-                .control_size(ControlSize::Small)
-                .on_press(|s: &mut App| s.library_service = None)
-                .build(k)
-                .key("library-filter-all"),
-        );
+    let mut filters = widgets::filter_group("library-filters", "Library Service").grow(1.0).min_w(0.0);
+    let active = s.active_library_service();
+    if services.len() > 1 || active.is_some() {
+        filters = filters.child(widgets::filter_button(
+            k, "library-filter-all".into(), "All".into(), active.is_none(), None,
+            |s, _| s.library_service = None,
+        ));
         for name in services {
-            let selected = s.library_service.as_deref().is_some_and(|v| v.eq_ignore_ascii_case(&name));
+            let selected = active.is_some_and(|v| v.eq_ignore_ascii_case(&name));
             let key_slug = name.to_lowercase().replace(' ', "-");
             let value = name.clone();
-            filters = filters.child(
-                Button::new(name)
-                    .variant(if selected { ButtonVariant::Submit } else { ButtonVariant::Outline })
-                    .control_size(ControlSize::Small)
-                    .on_press(move |s: &mut App| s.library_service = Some(value.clone()))
-                    .build(k)
-                    .key(format!("library-filter-{key_slug}")),
-            );
+            filters = filters.child(widgets::filter_button(
+                k, format!("library-filter-{key_slug}"), name, selected, None,
+                move |s, _| s.library_service = Some(value.clone()),
+            ));
         }
     }
     let sort_labels = LibrarySort::ALL.map(LibrarySort::label);
@@ -98,24 +94,42 @@ fn toolbar(s: &App, k: &Kit) -> El {
         k,
         "library-sort",
         SegmentedControl::new(&sort_labels, current)
+            .label("Sort Library")
             .on_pick(|s: &mut App, i: usize, _: &mut Tx| s.library_sort = LibrarySort::ALL[i]),
     );
     row().key("library-toolbar").w_full().gap(10.0).center_y().flex_wrap().child(filters).child(sort)
 }
 
-fn list(s: &App, k: &Kit, entries: Vec<(usize, &Entry)>) -> El {
+fn list(_s: &App, k: &Kit, entries: Vec<(usize, &Entry)>) -> El {
     if entries.is_empty() {
         return widgets::empty_state(k, "library-no-match", &icons::SEARCH, "No Matches", "Nothing in the library matches that search.", None);
     }
     let now = now();
-    let mut rows = col();
-    let last = entries.len() - 1;
-    for (position, (index, entry)) in entries.into_iter().enumerate() {
-        rows = rows.child(entry_row(s, k, index, entry, now));
-        if position < last {
-            rows = rows.child(Divider::horizontal().build(k));
-        }
-    }
+    let dark = k.dark;
+    let indices: Rc<Vec<usize>> = Rc::new(entries.into_iter().map(|(index, _)| index).collect());
+    let key_indices = indices.clone();
+    let build_indices = indices.clone();
+    let rows = col().key("library-rows").w_full().growth(GrowthSpec::default()).virtual_rows(
+        indices.len(),
+        65.0,
+        move |s: &App, position| {
+            let index = key_indices[position];
+            let date = s.history.get(index).map_or(0, |entry| entry.date);
+            Cow::Owned(format!("library-row-{date}-{index}"))
+        },
+        move |s: &App, position| {
+            let k = super::theme::kit(dark);
+            let index = build_indices[position];
+            let Some(entry) = s.history.get(index) else {
+                return el();
+            };
+            let mut wrap = col().w_full();
+            if position > 0 {
+                wrap = wrap.child(Divider::horizontal().build(k));
+            }
+            wrap.child(entry_row(s, k, index, entry, now))
+        },
+    );
     // The card keeps its own height; the column around it scrolls.
     widgets::page_scroll(k, col().key("library-scroll").child(card(k, "library-list", rows)))
 }
@@ -155,7 +169,7 @@ fn entry_row(s: &App, k: &Kit, index: usize, entry: &Entry, now: u64) -> El {
                     .label(format!("Open {label}"))
                     .help(format!("Open {filename}"))
                     .focusable(true)
-                    .focus_ring(2.0, 1.0, k.c.border_focus)
+                    .focus_ring(super::theme::FOCUS_RING_WIDTH, super::theme::FOCUS_RING_OFFSET, k.c.border_focus)
                     .cursor(Cursor::Pointer)
                     .h(20.0)
                     .px(7.0)
@@ -173,7 +187,7 @@ fn entry_row(s: &App, k: &Kit, index: usize, entry: &Entry, now: u64) -> El {
     }
     let meta = meta.child(source_icon(s, k, entry));
     let mut actions = row().gap(2.0).center_y();
-    let has_lookups = s.installed.iter().any(|i| i.manifest.kind.is_lookup());
+    let has_lookups = s.installed.iter().any(|i| i.manifest.supports_lookup());
     let lookup_target = entry.flac_file().filter(|_| has_lookups && !missing).map(|file| (entry.date, file.to_owned()));
     let lookup_open = lookup_target.is_some() && lookup_target == s.lookup_picker;
     if let Some(target) = lookup_target {
@@ -235,41 +249,68 @@ fn source_icon(s: &App, k: &Kit, entry: &Entry) -> El {
 }
 
 fn lookup_providers(s: &App, k: &Kit, index: usize) -> El {
-    let mut groups = Vec::new();
-    for kind in [Kind::Lyrics, Kind::Metadata] {
-        let mut installed = s.installed.iter().filter(|i| i.manifest.kind == kind).peekable();
-        if installed.peek().is_none() {
+    let mut lyrics = Vec::new();
+    let mut tags = Vec::new();
+    let mut json = Vec::new();
+    let mut metadata = Vec::new();
+    let mut updates = Vec::new();
+    for item in s.installed.iter().filter(|item| item.manifest.supports_lookup()) {
+        let id = item.manifest.id.clone();
+        let key = format!("lookup-{index}-{id}");
+        let label = item.manifest.name.strip_suffix(" Web").unwrap_or(&item.manifest.name);
+        let (group, help) = if item.manifest.kind == Kind::Lyrics {
+            (&mut lyrics, format!("Get lyrics from {label}"))
+        } else if let Some(message) = item.manifest.tag_writer_update() {
+            (&mut updates, message)
+        } else if item.manifest.can_write_tags() {
+            (&mut tags, format!("Write {label} metadata to this FLAC"))
+        } else if id == "musicbrainz" {
+            (&mut json, "Export MusicBrainz metadata as a JSON file".into())
+        } else {
+            (&mut metadata, format!("Export {label} metadata"))
+        };
+        let disabled = s.importing > 0 || s.removing.contains(&id);
+        group.push(widgets::button(k, &key, label, None, ButtonVariant::Outline,
+            move |s: &mut App| s.enqueue_lookup(index, &id),
+        ).disabled(disabled).help(help));
+    }
+
+    let mut providers = col().w_full().gap(8.0);
+    let mut first = true;
+    for (title, glyph, buttons) in [
+        ("Get Lyrics", &icons::MIC_VOCAL, lyrics),
+        ("Tag FLAC", &icons::TAG, tags),
+        ("Export JSON", &icons::FILE_UP, json),
+        ("Export Metadata", &icons::FILE_UP, metadata),
+        ("Update Required", &icons::TRIANGLE_ALERT, updates),
+    ] {
+        if buttons.is_empty() {
             continue;
         }
-        let mut buttons = row().gap(6.0).center_y().flex_wrap().grow(1.0).min_w(0.0);
-        for item in installed {
-            let id = item.manifest.id.clone();
-            let key = format!("lookup-{index}-{id}");
-            let label = item.manifest.name.strip_suffix(" Web").unwrap_or(&item.manifest.name);
-            buttons = buttons.child(widgets::button(k, &key, label, None, ButtonVariant::Outline,
-                move |s: &mut App| s.enqueue_lookup(index, &id),
-            ).disabled(s.importing > 0 || s.removing.contains(&item.manifest.id)));
+        if !first {
+            providers = providers.child(Divider::horizontal().build(k));
         }
-        let glyph = if kind == Kind::Lyrics { &icons::MIC_VOCAL } else { &icons::TAG };
-        let label = row().w(90.0).h(32.0).gap(6.0).center_y()
+        first = false;
+        let label = row().w(112.0).h(32.0).gap(6.0).center_y()
             .child(icon(glyph, 13.0).color(k.c.icon_muted))
-            .child(text(kind.label()).font(k.ty.small_medium).color(k.c.text_muted));
-        groups.push(row().w_full().gap(8.0).items_start().child(label).child(buttons));
+            .child(text(title).font(k.ty.small_medium).color(k.c.text_muted));
+        providers = providers.child(row().role("group").label(title).w_full().gap(8.0).items_start()
+            .child(label).child(row().gap(6.0).center_y().flex_wrap().grow(1.0).min_w(0.0).children(buttons)));
     }
-    let mut providers = col()
+    let disclosure = Collapsible::new("Lyrics & Metadata", true)
+        .on_toggle_tx(move |s: &mut App, tx: &mut Tx| {
+            s.lookup_picker = None;
+            tx.focus_when_shown(format!("lookup-{index}"), false);
+        })
+        .child(providers.pt(6.0))
+        .build(k).key(format!("lookup-disclosure-{index}"));
+    let panel = col()
         .key(format!("lookup-providers-{index}"))
         .w_full()
-        .gap(8.0)
         .padding(10.0)
         .radius(k.radius.md)
         .fill(k.c.bg_deep)
-        .border(1.0, k.c.border_base);
-    let last = groups.len().saturating_sub(1);
-    for (i, group) in groups.into_iter().enumerate() {
-        providers = providers.child(group);
-        if i < last {
-            providers = providers.child(Divider::horizontal().build(k));
-        }
-    }
-    col().w_full().px(4.0).pb(10.0).child(providers)
+        .border(1.0, k.c.border_base)
+        .child(disclosure);
+    col().w_full().px(4.0).pb(10.0).child(panel)
 }

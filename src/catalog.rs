@@ -112,6 +112,24 @@ mod tests {
     use super::*;
 
     #[test]
+    fn apple_and_youtube_music_collections_go_to_catalog_and_tracks_go_to_resolvers() {
+        for catalog in [
+            "https://music.apple.com/id/new", "https://music.apple.com/us/album/hey-jude/1441133100",
+            "https://music.youtube.com/explore", "https://music.youtube.com/browse/MPREb_EB1GQowDeAh",
+            "https://music.youtube.com/playlist?list=OLAK5uy_example",
+        ] {
+            assert!(is_catalog_url(catalog), "{catalog}");
+        }
+        for track in [
+            "https://music.apple.com/us/album/hey-jude/1441133100?i=1441133277",
+            "https://music.apple.com/us/song/hey-jude/1441133277",
+            "https://music.youtube.com/watch?v=KQetemT1sWc&list=OLAK5uy_example",
+        ] {
+            assert!(!is_catalog_url(track), "{track}");
+        }
+    }
+
+    #[test]
     fn an_appended_feed_page_extends_its_shelf_without_duplicate_cards() {
         let feed = |ids: &[&str]| {
             let urls: Vec<_> = ids.iter().map(|id| format!("https://www.qobuz.com/playlist/{id}")).collect();
@@ -177,6 +195,7 @@ pub struct Catalog {
     request: Option<Request>,
     last_failed: Option<(Request, Option<String>)>,
     trail: Vec<(Request, ResultPage, BTreeSet<String>)>,
+    hidden_home: Option<(Option<Request>, ResultPage, BTreeSet<String>)>,
     pending: Option<Pending>,
     serial: u64,
     artwork: BTreeMap<String, Option<Image>>,
@@ -197,6 +216,20 @@ pub fn is_catalog_url(value: &str) -> bool {
         return true;
     }
     let Some(host) = url.host_str() else { return false };
+    if host == "music.youtube.com" {
+        return matches!(url.path().trim_end_matches('/'), "" | "/home" | "/explore" | "/search")
+            || url.path().starts_with("/browse/");
+    }
+    if matches!(host, "music.apple.com" | "geo.music.apple.com" | "itunes.apple.com") {
+        let mut parts = url.path_segments().into_iter().flatten().filter(|part| !part.is_empty());
+        let first = parts.next();
+        let route = if first.is_some_and(|part| part.len() == 2 && part.bytes().all(|b| b.is_ascii_alphabetic())) {
+            parts.next()
+        } else {
+            first
+        };
+        return matches!(route, None | Some("browse" | "home" | "new" | "search"));
+    }
     let browse_host = ["open.spotify.com", "tidal.com", "deezer.com", "qobuz.com", "music.amazon.com",
         "music.amazon.co.uk", "music.amazon.de", "music.amazon.co.jp"]
         .iter().any(|domain| host == *domain || host.strip_suffix(domain).is_some_and(|part| part.ends_with('.')));
@@ -221,6 +254,7 @@ impl Catalog {
         self.result = None;
         self.request = None;
         self.trail.clear();
+        self.hidden_home = None;
         self.selected.clear();
         self.error = None;
     }
@@ -236,6 +270,13 @@ impl Catalog {
                 Query::Open(url) => valid_url(url).is_some_and(|url| matches!(url.path().trim_end_matches('/'), "" | "/browse" | "/home")),
                 Query::Search(_) => false,
             })
+    }
+
+    pub fn home_feed_active(&self) -> bool {
+        match &self.pending {
+            Some(pending) => matches!(pending.request.query, Query::Home) || (pending.append && self.showing_home()),
+            None => self.result.is_some() && self.showing_home(),
+        }
     }
 
     pub fn can_go_back(&self) -> bool {
@@ -319,15 +360,6 @@ impl Catalog {
 }
 
 impl App {
-    pub fn enter_catalog(&mut self) {
-        self.page = Page::Catalog;
-        if self.importing == 0 && self.catalog.result.is_none() && !self.catalog.busy() && self.catalog.error.is_none()
-            && self.chosen_catalog_provider().is_some()
-        {
-            self.catalog_home();
-        }
-    }
-
     pub fn catalog_providers(&self) -> impl Iterator<Item = &Installed> {
         self.installed.iter().filter(|i| i.manifest.catalog && !self.removing.contains(&i.manifest.id))
     }
@@ -347,6 +379,9 @@ impl App {
         let missing = MISSING_CATALOG_EXTENSION;
         let url = valid_url(url).ok_or(missing)?;
         let host = url.host_str().ok_or(missing)?;
+        if crate::services::is_excluded_host(host) {
+            return Err(missing);
+        }
         let mut matches = self.catalog_providers().filter(|p| extensions::host_matches(&p.manifest.hosts, host));
         let first = matches.next().ok_or(missing)?;
         if matches.next().is_none() {
@@ -404,11 +439,33 @@ impl App {
         self.start_catalog(Request { provider, query: Query::Open(url) }, None);
     }
 
-    pub fn catalog_home(&mut self) {
+    pub fn toggle_catalog_home(&mut self) {
+        if self.catalog.home_feed_active() {
+            self.catalog.cancel();
+            self.catalog.clear_artwork_queue();
+            let request = self.catalog.request.take();
+            let selected = std::mem::take(&mut self.catalog.selected);
+            self.catalog.hidden_home = self.catalog.result.take().map(|page| (request, page, selected));
+            self.catalog.trail.clear();
+            self.catalog.error = None;
+            self.catalog.last_failed = None;
+            return;
+        }
         let Some(provider) = self.chosen_catalog_provider().map(|p| p.manifest.id.clone()) else {
             self.catalog.error = Some("Choose a catalog extension first.".into());
             return;
         };
+
+        if self.catalog.provider.as_deref() == Some(provider.as_str())
+            && let Some((request, page, selected)) = self.catalog.hidden_home.take()
+        {
+            self.catalog.request = request;
+            self.catalog.result = Some(page);
+            self.catalog.selected = selected;
+            self.catalog.error = None;
+            return;
+        }
+
         self.catalog.trail.clear();
         self.start_catalog(Request { provider, query: Query::Home }, None);
     }
@@ -441,6 +498,7 @@ impl App {
         if !append {
             self.catalog.clear_artwork_queue();
             self.catalog.result = None;
+            self.catalog.hidden_home = None;
             self.catalog.selected.clear();
         }
         let Some(link) = &self.link else { return };
@@ -507,6 +565,7 @@ impl App {
             .filter(|url| !existing.contains(*url))
             .collect();
         if !urls.is_empty() {
+            self.batch_destination = None;
             let draft = self.url.text.trim();
             let selected = urls.join(" ");
             self.url = TextEdit::new(&if draft.is_empty() { selected } else { format!("{draft} {selected}") });

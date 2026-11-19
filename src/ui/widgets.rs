@@ -5,7 +5,7 @@ use crate::app::App;
 use crate::extensions::ExtOption;
 use crate::icons;
 use crate::services::Service;
-use rune::{Color, El, Icon, Image, ScrollSpec, SurfaceFit, Tx, col, el, icon, row, text};
+use rune::{Color, El, Icon, Image, LiveRegion, ScrollSpec, SurfaceFit, TextEdit, TextStyle, Tx, col, el, icon, row, text};
 use rune_kit::{Badge, BadgeVariant, Button, ButtonVariant, ControlSize, IconButton, IconButtonVariant, Kit, ScrollBar, ScrollBarStyle, SegmentedControl, StateColors};
 
 /// Formats extension-provided captions for display while preserving mixed-case names and paths.
@@ -110,6 +110,59 @@ pub fn segmented(k: &Kit, key: &str, control: SegmentedControl) -> El {
         )
 }
 
+pub fn filter_group(key: &str, label: &str) -> El {
+    row().key(key.to_owned()).role("radiogroup").label(label.to_owned())
+        .focus_group().gap(4.0).center_y().flex_wrap()
+}
+
+pub fn filter_button(
+    k: &Kit, key: String, label: String, selected: bool, leading: Option<El>,
+    select: impl Fn(&mut App, &mut Tx) + 'static,
+) -> El {
+    let mut button = Button::new(label.clone())
+        .variant(if selected { ButtonVariant::Submit } else { ButtonVariant::Neutral })
+        .control_size(ControlSize::Small)
+        .on_press_tx(move |s, tx| {
+            if !selected {
+                select(s, tx);
+            }
+        });
+    if let Some(leading) = leading {
+        button = button.label_with(move |font, ink| {
+            row().gap(6.0).center_y().child(leading.a11y_hidden()).child(text(label).font(font).color(ink))
+        });
+    }
+    button.build(k).h(28.0).key(key).role("radio").checked(selected).focus_selected(selected)
+}
+
+pub fn error_banner(k: &Kit, key: String, title: &str, detail: El, action: Option<El>) -> El {
+    row().key(key).role("alert").live_region(LiveRegion::Assertive)
+        .w_full().min_w(0.0).gap(12.0).padding(12.0).items_start()
+        .radius(k.radius.lg).fill(k.c.danger.bg)
+        .child(icon(&icons::CIRCLE_X, 18.0).color(k.c.danger.icon).a11y_hidden())
+        .child(
+            col().grow(1.0).shrink().min_w(0.0).gap(3.0)
+                .child(text(title.to_owned()).font(TextStyle::new(14.0, 700.0).lh(20.0)).color(k.c.text_base).wrap())
+                .child(detail.font(k.ty.body).color(k.c.text_base).wrap()),
+        )
+        .children(action)
+}
+
+pub fn confirmation_dialog(k: &Kit, key: &str, title: &str, detail: String, trigger: &str, keep: El, confirm: El) -> El {
+    let dialog = col().key(format!("{key}-dialog")).role("alertdialog")
+        .label(title.to_owned()).description(detail.clone()).w_full().max_w(416.0)
+        .padding(16.0).gap(16.0).radius(CARD_RADIUS)
+        .fill(k.c.surface_float).border(1.0, k.c.border_base)
+        .modal(true, |s: &mut App| s.confirm_action = None)
+        .modal_click_outside(false).focus_return(trigger.to_owned())
+        .child(col().gap(4.0)
+            .child(text(title.to_owned()).role("heading").font(SUBHEADING).color(k.c.text_strong))
+            .child(text(detail).key(format!("{key}-counts")).font(k.ty.body).color(k.c.text_muted).wrap()))
+        .child(row().gap(8.0).justify_end().child(keep.autofocus().default_button()).child(confirm));
+    el().key(format!("{key}-overlay")).absolute(0.0, 0.0).w_full().h_full()
+        .fill(k.c.scrim).padding(16.0).center().child(dialog)
+}
+
 pub fn extension_option(k: &Kit, s: &App, extension: &str, option: &ExtOption, key: &str) -> El {
     let labels: Vec<String> = option.choices.iter().map(|choice| title_case_label(&choice.label)).collect();
     let selected = s.pick_index(extension, option);
@@ -125,7 +178,7 @@ pub fn scroll_bar_style(k: &Kit) -> ScrollBarStyle {
 
 pub fn page_scroll(k: &Kit, body: El) -> El {
     let bar = scroll_bar_style(k);
-    body.scroll(ScrollSpec { stick_bottom: false }).grow(1.0).min_h(0.0)
+    body.scroll(ScrollSpec { stick_bottom: false }).scroll_anchor().grow(1.0).min_h(0.0)
         // Place the thumb in the page's right gutter.
         .pr(bar.strip())
         .mr(-bar.strip())
@@ -137,13 +190,13 @@ pub fn status_badge(k: &Kit, glyph: &'static Icon, label: &str, status: Option<S
     row()
         .role("status")
         .label(label.to_owned())
-        .h(24.0)
+        .h(20.0)
         .px(8.0)
         .gap(4.0)
         .center()
-        .radius(999.0)
+        .radius(10.0)
         .fill(bg)
-        .child(icon(glyph, 14.0).color(ink).a11y_hidden())
+        .child(icon(glyph, 12.0).color(ink).a11y_hidden())
         .child(text(label.to_owned()).font(k.ty.small_medium).color(ink).a11y_hidden())
 }
 
@@ -171,6 +224,21 @@ pub fn icon_button(k: &Kit, key: &str, glyph: &'static Icon, label: &str, on_pre
         .build(k).key(key.to_owned())
 }
 
+pub fn clear_input_button(
+    k: &Kit,
+    input_key: &'static str,
+    label: &'static str,
+    edit: impl Fn(&mut App) -> &mut TextEdit + 'static,
+) -> El {
+    IconButton::new(&icons::X).variant(IconButtonVariant::Ghost).control_size(ControlSize::Regular)
+        .label(label).help(label)
+        .on_press_tx(move |s: &mut App, tx| {
+            *edit(s) = TextEdit::default();
+            tx.focus_when_shown(input_key, false);
+        })
+        .build(k)
+}
+
 pub fn danger_icon_button(k: &Kit, key: &str, glyph: &'static Icon, label: &str, on_press: impl Fn(&mut App) + 'static) -> El {
     icon_button(super::theme::danger_icon_kit(k.dark), key, glyph, label, on_press)
 }
@@ -180,32 +248,27 @@ pub fn button(k: &Kit, key: &str, label: &str, glyph: Option<&'static Icon>, var
     if let Some(glyph) = glyph {
         b = b.icon(glyph);
     }
-    let button = b.build(k).h(32.0).key(key.to_owned());
+    let build_kit = if variant == ButtonVariant::Danger { super::theme::danger_button_kit(k.dark) } else { k };
+    let button = b.build(build_kit).h(32.0).key(key.to_owned());
     if variant == ButtonVariant::Danger { button.fill(k.c.danger.bg) } else { button }
 }
 
 /// A centred illustration, message and optional action, for empty pages.
 pub fn empty_state(k: &Kit, key: &str, glyph: &'static Icon, title: &str, body: &str, action: Option<El>) -> El {
-    let mut state = col()
+    col()
         .key(key.to_owned())
         .w_full()
         .grow(1.0)
         .min_h(0.0)
-        .gap(16.0)
+        .gap(8.0)
+        .padding(20.0)
         .center()
-        .child(
-            el().size(56.0, 56.0).center().radius(999.0).fill(k.c.layer_02)
-                .child(icon(glyph, 28.0).color(k.c.icon_base)).a11y_hidden(),
-        )
-        .child(
-            col().center().gap(4.0).max_w(360.0)
-                .child(text(title.to_owned()).role("heading").font(SUBHEADING).color(k.c.text_strong).align(rune::Align::Center))
-                .child(text(body.to_owned()).font(k.ty.body).color(k.c.text_muted).wrap().align(rune::Align::Center)),
-        );
-    if let Some(action) = action {
-        state = state.child(el().h(4.0)).child(action);
-    }
-    state
+        .child(icon(glyph, 32.0).color(k.c.icon_base).a11y_hidden())
+        .child(text(title.to_owned()).role("heading").level(3).font(SUBHEADING)
+            .color(k.c.text_strong).wrap().align(rune::Align::Center))
+        .child(text(body.to_owned()).font(k.ty.small).color(k.c.text_muted)
+            .max_w(360.0).wrap().align(rune::Align::Center))
+        .children(action)
 }
 
 /// "Just Now", "5 min ago", "3 h ago", "2 d ago", else a date.

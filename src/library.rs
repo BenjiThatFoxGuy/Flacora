@@ -167,6 +167,32 @@ pub fn fetch_image(client: &reqwest::blocking::Client, url: &str, limit: u64) ->
 /// The front cover embedded in a FLAC file (any picture when there is no front cover).
 pub fn cover_from_flac(paths: &Paths, file: &Path) -> Option<(PathBuf, Vec<u8>)> {
     let tag = metaflac::Tag::read_from_path(file).ok()?;
+    cache_embedded_cover(paths, &tag)
+}
+
+pub struct TaggedTrack {
+    pub file: String,
+    pub title: String,
+    pub artist: String,
+    pub album: String,
+    pub cover: Option<(PathBuf, Vec<u8>)>,
+}
+
+pub fn read_tagged_track(paths: &Paths, file: String) -> Result<TaggedTrack, String> {
+    let tag = metaflac::Tag::read_from_path(&file).map_err(|_| "Could not read the updated FLAC")?;
+    let field = |key| tag.get_vorbis(key)
+        .and_then(|mut values| values.find(|value| !value.trim().is_empty()))
+        .unwrap_or_default().to_owned();
+    Ok(TaggedTrack {
+        file,
+        title: field("TITLE"),
+        artist: field("ARTIST"),
+        album: field("ALBUM"),
+        cover: cache_embedded_cover(paths, &tag),
+    })
+}
+
+fn cache_embedded_cover(paths: &Paths, tag: &metaflac::Tag) -> Option<(PathBuf, Vec<u8>)> {
     let pictures: Vec<_> = tag.pictures().collect();
     let picture = pictures
         .iter()

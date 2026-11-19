@@ -81,6 +81,7 @@ pub fn job(app: &mut App, extension: &str, url: &str, status: Status) -> u64 {
         extension,
         output: app.settings.output.clone(),
         layout: app.settings.layout,
+        auto_tag: app.settings.auto_tag,
         staging: None,
         handle: (status == Status::Running).then(JobHandle::detached),
         cancelling: false,
@@ -98,6 +99,7 @@ pub fn job(app: &mut App, extension: &str, url: &str, status: Status) -> u64 {
         finished: None,
         links: Vec::new(),
         choices: Vec::new(),
+        batch_service: None,
         resolved: None,
     });
     id
@@ -116,6 +118,12 @@ fn describe(app: &mut App, id: u64, title: &str, artist: &str, album: &str, qual
 
 pub fn home(s: &mut App) {
     *s = app();
+}
+
+pub fn downloads_batch_input(s: &mut App) {
+    home(s);
+    s.url = TextEdit::new("https://open.spotify.com/track/1CPZ5BxNNd0n0nF4Orb9JS https://open.spotify.com/track/3CPFHaVEHkkH26hAEPgMMp");
+    s.set_batch_service(services::by_name("Tidal"));
 }
 
 pub fn queue(s: &mut App) {
@@ -149,6 +157,16 @@ pub fn queue(s: &mut App) {
     s.url = TextEdit::new("https://tidal.com/track/441821360");
 }
 
+pub fn queue_actions(s: &mut App) {
+    queue(s);
+    s.queue_menu_open = true;
+}
+
+pub fn queue_cancel_confirmation(s: &mut App) {
+    queue(s);
+    s.confirm_action = Some(crate::app::ConfirmAction::CancelAll);
+}
+
 pub fn queue_indeterminate(s: &mut App) {
     queue(s);
     let job = &mut s.jobs[0];
@@ -156,7 +174,7 @@ pub fn queue_indeterminate(s: &mut App) {
     job.stage = Some("Getting a download token".into());
 }
 
-/// Odesli found a Spotify link on Tidal, Deezer, Amazon Music and Pandora; the user picks.
+/// Odesli found a Spotify link on Tidal, Deezer, and Amazon Music; the user picks.
 pub fn choose(s: &mut App) {
     *s = app();
     let id = job(s, "odesli", "https://open.spotify.com/track/1CPZ5BxNNd0n0nF4Orb9JS", Status::Running);
@@ -207,6 +225,11 @@ pub fn library(s: &mut App) {
     s.page = Page::Library;
 }
 
+pub fn library_search(s: &mut App) {
+    library(s);
+    s.search = TextEdit::new("Deezer");
+}
+
 pub fn library_single(s: &mut App) {
     library(s);
     s.history.truncate(1);
@@ -224,6 +247,13 @@ pub fn library_lookups(s: &mut App) {
         "betterlyrics", "lrclib", "lrc-red", "lyricsplus", "musixmatch", "musicbrainz",
         "spotify-web", "tidal-web", "deezer-web", "qobuz-web", "amazon-web",
     ].map(installed));
+}
+
+pub fn library_outdated_metadata(s: &mut App) {
+    library_lookups(s);
+    let web = s.installed.iter_mut().find(|i| i.manifest.id == "tidal-web").unwrap();
+    web.manifest.version = "1.0.0".into();
+    web.manifest.writes_tags = false;
 }
 
 pub fn library_sources(s: &mut App) {
@@ -277,6 +307,41 @@ pub fn catalog_results(s: &mut App) {
     });
 }
 
+pub fn catalog_idle(s: &mut App) {
+    *s = app();
+    s.page = Page::Catalog;
+    s.installed.extend(["deezer-web", "tidal-web"].map(installed));
+    s.catalog.select_provider("deezer-web".into());
+}
+
+pub fn catalog_with_resolver_sources(s: &mut App) {
+    catalog_idle(s);
+    s.installed.extend(["apple-web", "ytmusic-web"].map(installed));
+    s.catalog.select_provider("apple-web".into());
+}
+
+pub fn catalog_batch(s: &mut App) {
+    catalog_results(s);
+    s.installed.push(installed("squigly"));
+    s.catalog.select_provider("spotify-web".into());
+    let items: Vec<_> = (1..=50).map(|track| crate::catalog::Item {
+        kind: crate::catalog::Kind::Track,
+        title: format!("Sample Track {track}"),
+        detail: "Sample Artist".into(),
+        url: format!("https://open.spotify.com/track/{track:022}"),
+        artwork: None,
+    }).collect();
+    s.catalog.selected = items.iter().map(|item| item.url.clone()).collect();
+    s.catalog.result = Some(crate::catalog::ResultPage {
+        title: "Sample Playlist".into(),
+        note: String::new(),
+        next: None,
+        artwork: None,
+        sections: Vec::new(),
+        items,
+    });
+}
+
 pub fn catalog_link(s: &mut App) {
     *s = app();
     s.installed.push(installed("deezer-web"));
@@ -294,6 +359,11 @@ pub fn catalog_feed(s: &mut App) {
         title: title.into(),
         urls: page.items.iter().filter(|item| item.kind == kind).map(|item| item.url.clone()).collect(),
     }).collect();
+}
+
+pub fn catalog_feed_hidden(s: &mut App) {
+    catalog_feed(s);
+    s.toggle_catalog_home();
 }
 
 pub fn catalog_overflow(s: &mut App) {
@@ -328,12 +398,21 @@ pub fn extensions_page(s: &mut App) {
     *s = app();
     s.page = Page::Extensions;
     s.installed.extend(["lucida", "monochrome", "squigly", "betterlyrics", "lrclib", "lyricsplus", "musixmatch", "musicbrainz"].map(installed));
-    s.extension_status.insert("lucida".into(), ExtensionStatus::Services(vec!["Qobuz".into(), "Amazon Music".into()]));
+    let legacy_status = r#"@flacora {"event":"services","services":["Qobuz","Amazon Music","Yandex Music"]}"#;
+    let Some(crate::protocol::Event::Services(services)) = crate::protocol::parse(legacy_status) else {
+        unreachable!("valid status fixture");
+    };
+    s.extension_status.insert("lucida".into(), ExtensionStatus::Services(services));
 }
 
 pub fn extensions_empty(s: &mut App) {
     fresh(s);
     s.page = Page::Extensions;
+}
+
+pub fn extensions_remove_confirmation(s: &mut App) {
+    extensions_page(s);
+    s.confirm_action = Some(crate::app::ConfirmAction::RemoveAllExtensions);
 }
 
 pub fn extensions_dropping(s: &mut App) {
@@ -390,6 +469,16 @@ pub fn settings_update_available(s: &mut App) {
 pub fn output_settings(s: &mut App) {
     settings(s);
     s.settings.layout = crate::output::Layout { filename: crate::output::Filename::TitleArtist, folders: crate::output::Folders::ArtistAlbum };
+}
+
+pub fn auto_tag_available_settings(s: &mut App) {
+    settings(s);
+    s.installed.push(installed("tidal-web"));
+}
+
+pub fn auto_tag_settings(s: &mut App) {
+    auto_tag_available_settings(s);
+    s.settings.auto_tag = true;
 }
 
 pub fn settings_without_ffmpeg(s: &mut App) {

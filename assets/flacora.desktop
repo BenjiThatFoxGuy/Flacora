@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Flacora
+Comment=Download tracks in true FLAC from Tidal, Qobuz, Amazon Music & Deezer — no account required.
+Exec=flacora
+Icon=flacora
+Terminal=false
+Categories=AudioVideo;Audio;

@@ -1,9 +1,9 @@
 [package]
 name = "flacora"
-version = "1.0.0"
+version = "1.0.1"
 edition = "2024"
 license = "MIT"
-description = "Flacora: a music downloader GUI whose downloaders are installable extensions"
+description = "Flacora: Download tracks in true FLAC from Tidal, Qobuz, Amazon Music & Deezer — no account required."
 
 [dependencies]
 aes-gcm = { version = "0.10", default-features = false, features = ["aes", "alloc"] }

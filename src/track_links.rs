@@ -23,11 +23,6 @@ pub fn is_collection(url: &Url) -> bool {
             "album" | "albums" => amazon_track_id(url).is_none(),
             _ => collection_kind(Some(first)),
         }
-    } else if matches!(host, "music.yandex.ru" | "music.yandex.com") {
-        match first {
-            "album" => segments.nth(1) != Some("track"),
-            _ => collection_kind(Some(first)),
-        }
     } else if host_is(host, "youtube.com") {
         matches!(first, "playlist" | "channel" | "user" | "c") || first.starts_with('@')
     } else {
@@ -68,7 +63,6 @@ mod tests {
             "https://music.amazon.com/albums/B0FD256Q8D?trackAsin=bad",
             "https://music.apple.com/us/album/golden/1820264137",
             "https://music.youtube.com/playlist?list=OLAK5uy_example",
-            "https://music.yandex.ru/album/31266458",
             "https://a.bandcamp.com/album/example",
         ] {
             assert!(is_collection(&Url::parse(link).unwrap()), "{link}");
@@ -84,7 +78,6 @@ mod tests {
             "https://music.amazon.com/albums/B0FD256Q8D?trackAsin=B0FD256Q8F",
             "https://geo.music.apple.com/us/album/golden/1820264137?i=1820264150",
             "https://music.youtube.com/watch?v=9_bTl2vvYQg&list=OLAK5uy_example",
-            "https://music.yandex.ru/album/31266458/track/140305453",
             "https://a.bandcamp.com/track/example",
             "https://spotify.link/abcdef",
             "https://deezer.page.link/abcdef",

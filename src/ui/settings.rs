@@ -1,16 +1,17 @@
 //! Settings: download folder, appearance, default extensions, helpers, storage.
 
+use super::theme::{self, FOCUS_RING_OFFSET, FOCUS_RING_WIDTH, Kit};
 use super::widgets::{self, card, section};
 use crate::app::{App, RESOLVER_KEY};
 use crate::extensions::Kind;
 use crate::icons;
 use crate::output::{Filename, Folders, Layout};
 use crate::services::SERVICES;
-use crate::store::{self, Theme};
+use crate::store::{self, Theme, ThemePreset};
 use rune::{Color, Cursor, El, FileDialogOptions, Icon, Tx, col, el, icon, row, text};
-use rune_kit::{Button, ButtonVariant, ControlSize, Divider, Kit, SegmentedControl};
+use rune_kit::{Button, ButtonVariant, ControlSize, Divider, SegmentedControl};
 
-pub fn page(s: &App, k: &Kit) -> El {
+pub fn page(s: &App, k: &Kit, dark: bool) -> El {
     let head = widgets::page_header(k, "Settings", "Where downloads go, how Flacora looks, and which extension handles each service.", vec![]);
     let mut downloads = vec![folder_row(s, k), filename_row(s, k), folders_row(s, k), preview_row(s, k)];
     if s.download_tag_writers().next().is_some() {
@@ -22,7 +23,7 @@ pub fn page(s: &App, k: &Kit) -> El {
         .child(section(k, "Downloads", None))
         .child(group(k, "group-downloads", downloads))
         .child(section(k, "Appearance", None))
-        .child(group(k, "group-appearance", vec![theme_row(s, k)]))
+        .child(group(k, "group-appearance", vec![theme_preset_row(s, k, dark), theme_row(s, k)]))
         .child(section(k, "Default Extension", None))
         .child(group(k, "group-defaults", default_rows(s, k)))
         .child(
@@ -53,6 +54,13 @@ fn group(k: &Kit, key: &str, rows: Vec<El>) -> El {
 
 /// A setting: title and explanation on the left, its control on the right.
 fn setting(k: &Kit, key: &str, title: &str, detail: El, control: El) -> El {
+    let label = col().gap(3.0)
+        .child(text(title.to_owned()).font(k.ty.ui_medium).color(k.c.text_strong))
+        .child(detail);
+    setting_row(key, label, control)
+}
+
+fn setting_row(key: &str, label: El, control: El) -> El {
     row()
         .key(key.to_owned())
         .w_full()
@@ -61,11 +69,7 @@ fn setting(k: &Kit, key: &str, title: &str, detail: El, control: El) -> El {
         .gap(16.0)
         .center_y()
         .flex_wrap()
-        .child(
-            col().gap(3.0).w(168.0).grow(1.0).shrink().min_w(168.0)
-                .child(text(title.to_owned()).font(k.ty.ui_medium).color(k.c.text_strong))
-                .child(detail),
-        )
+        .child(label.w(168.0).grow(1.0).shrink().min_w(168.0))
         .child(control)
 }
 
@@ -168,7 +172,7 @@ fn auto_tag_row(s: &App, k: &Kit) -> El {
             .label(label)
             .checked(on)
             .focusable(true)
-            .focus_ring(super::theme::FOCUS_RING_WIDTH, super::theme::FOCUS_RING_OFFSET, k.c.border_focus)
+            .focus_ring(FOCUS_RING_WIDTH, FOCUS_RING_OFFSET, k.c.border_focus)
             .cursor(Cursor::Pointer)
             .radius(k.radius.xs)
             .min_h(28.0)
@@ -191,16 +195,55 @@ fn layout_preview(output: &std::path::Path, layout: Layout) -> String {
     path.to_string_lossy().into_owned()
 }
 
+fn theme_preset_row(s: &App, k: &Kit, dark: bool) -> El {
+    let choices = ThemePreset::ALL.into_iter().enumerate().map(|(i, preset)| {
+        let selected = s.settings.theme_preset == preset;
+        let preview = theme::kit(preset, dark);
+        let swatch = el().size(18.0, 18.0).radius(4.0)
+            .fill(preview.c.page)
+            .border(1.0, preview.c.border_strong)
+            .center()
+            .child(el().size(8.0, 8.0).radius(2.0).fill(preview.c.bg_accent));
+        let option = row()
+            .key(format!("theme-preset-{}", preset.key()))
+            .role("radio")
+            .label(preset.label())
+            .checked(selected)
+            .position_in_set(i + 1, ThemePreset::ALL.len())
+            .focusable(true)
+            .focus_selected(selected)
+            .focus_ring(FOCUS_RING_WIDTH, FOCUS_RING_OFFSET, k.c.border_focus)
+            .cursor(Cursor::Pointer)
+            .h(30.0).px(8.0).gap(6.0).center_y()
+            .radius(k.radius.md)
+            .fill(if selected { k.c.layer_04 } else { k.c.bg_base })
+            .border(1.0, if selected { k.c.border_focus } else { k.c.border_base })
+            .on_press(move |s: &mut App| s.set_theme_preset(preset))
+            .child(swatch.a11y_hidden())
+            .child(text(preset.label()).font(k.ty.small_medium).color(k.c.text_strong).a11y_hidden());
+        k.interactive(option)
+    });
+    col().key("setting-theme-preset").w_full().px(4.0).py(7.0).gap(6.0)
+        .child(text("Theme").font(k.ty.ui_medium).color(k.c.text_strong))
+        .child(row().key("theme-presets").role("radiogroup").label("Theme")
+            .focus_group().w_full().gap(6.0).flex_wrap().children(choices))
+}
+
 fn theme_row(s: &App, k: &Kit) -> El {
-    let labels: Vec<&str> = Theme::ALL.iter().map(|t| t.label()).collect();
+    let labels = Theme::ALL.map(Theme::label);
     let current = Theme::ALL.iter().position(|t| *t == s.settings.theme);
+    let detail = if s.settings.theme_preset == ThemePreset::Gothic {
+        "Gothic uses a dark palette in every mode."
+    } else {
+        "Follow the system, or always use light or dark."
+    };
     setting(
         k,
         "setting-theme",
-        "Theme",
-        muted(k, "Follow the system, or always use light or dark."),
+        "Color Mode",
+        muted(k, detail),
         widgets::segmented(k, "theme", SegmentedControl::new(&labels, current)
-            .label("Theme")
+            .label("Color Mode")
             .on_pick(|s: &mut App, i: usize, _: &mut Tx| s.set_theme(Theme::ALL[i])))
             .w(248.0),
     )
@@ -221,13 +264,13 @@ fn default_rows(s: &App, k: &Kit) -> Vec<El> {
             Some(id) => ids.iter().position(|i| i == id).map(|p| p + 1).unwrap_or(0),
             None => 0,
         };
-        let key = service.key.to_owned();
-        rows.push(setting(
+        let key = format!("default-{}", service.key);
+        rows.push(default_setting(
             k,
-            &format!("setting-default-{}", service.key),
+            &key,
             service.name,
-            muted(k, format!("{} extensions can download from {}.", candidates.len(), service.name)),
-            default_picker(k, &format!("default-{}", service.key), service.name, &labels, current, ids, key),
+            format!("{} extensions can download from {}.", candidates.len(), service.name),
+            default_picker(k, &key, service.name, &labels, current, ids, service.key.to_owned()),
         ));
     }
     // The resolver to use when two or more are installed.
@@ -241,11 +284,11 @@ fn default_rows(s: &App, k: &Kit) -> Vec<El> {
             Some(id) => ids.iter().position(|i| i == id).map(|p| p + 1).unwrap_or(0),
             None => 0,
         };
-        rows.push(setting(
+        rows.push(default_setting(
             k,
-            "setting-default-resolver",
+            "default-resolver",
             Kind::Resolver.label(),
-            muted(k, "Finds Spotify, Apple Music and YouTube tracks on a service you can download from.".to_owned()),
+            "Finds Spotify, Apple Music and YouTube tracks on a service you can download from.",
             default_picker(k, "default-resolver", Kind::Resolver.label(), &labels, current, ids, RESOLVER_KEY.to_owned()),
         ));
     }
@@ -261,18 +304,18 @@ fn default_rows(s: &App, k: &Kit) -> Vec<El> {
     rows
 }
 
-/// Uses a segmented control for 2-3 options, and wraps cleanly as pills when many extensions share a service.
+fn default_setting(k: &Kit, key: &str, title: &str, help: impl Into<String>, control: El) -> El {
+    let help = help.into();
+    let label = row().key(format!("{key}-help")).role("group").label(title.to_owned())
+        .self_start().gap(6.0).center_y().description(help.clone()).help(help).help_side(rune::Side::Right)
+        .child(text(title.to_owned()).font(k.ty.ui_medium).color(k.c.text_strong).a11y_hidden())
+        .child(icon(&icons::CIRCLE_INFO, 14.0).color(k.c.text_muted).a11y_hidden());
+    setting_row(&format!("setting-{key}"), col().child(label), control).justify_end()
+}
+
+/// A segmented radio group with consistent sizing and wrapping for long extension lists.
 fn default_picker(k: &Kit, key: &str, group_label: &str, labels: &[String], current: usize, ids: Vec<String>, pref_key: String) -> El {
-    if labels.len() <= 3 {
-        return widgets::segmented(
-            k,
-            key,
-            SegmentedControl::new(labels, Some(current))
-                .label(group_label)
-                .on_pick(move |s: &mut App, i: usize, _: &mut Tx| s.set_preferred(&pref_key, i.checked_sub(1).and_then(|i| ids.get(i).cloned()))),
-        );
-    }
-    let seg_k = super::theme::segmented_kit(k.dark);
+    let seg_k = &k.segmented;
     let count = labels.len();
     let mut group = row()
         .key(key.to_owned())
@@ -280,8 +323,8 @@ fn default_picker(k: &Kit, key: &str, group_label: &str, labels: &[String], curr
         .label(group_label.to_owned())
         .focus_group()
         .gap(4.0)
-        .flex_wrap()
-        .max_w(520.0);
+        .shrink().min_w(0.0)
+        .flex_wrap();
     for (i, label) in labels.iter().enumerate() {
         let selected = i == current;
         let pref_key = pref_key.clone();
@@ -294,8 +337,9 @@ fn default_picker(k: &Kit, key: &str, group_label: &str, labels: &[String], curr
             .position_in_set(i + 1, count)
             .focusable(true)
             .focus_selected(selected)
-            .focus_ring(super::theme::FOCUS_RING_WIDTH, super::theme::FOCUS_RING_OFFSET, k.c.border_focus)
+            .focus_ring(FOCUS_RING_WIDTH, FOCUS_RING_OFFSET, k.c.border_focus)
             .cursor(Cursor::Pointer)
+            .shrink().min_w(0.0)
             .h(28.0)
             .px(10.0)
             .center()
@@ -305,18 +349,21 @@ fn default_picker(k: &Kit, key: &str, group_label: &str, labels: &[String], curr
             .on_press(move |s: &mut App| s.set_preferred(&pref_key, chosen.clone()))
             .child(
                 text(label.clone())
-                    .font(if selected { k.ty.small_medium } else { k.ty.small })
+                    .font(k.ty.ui_medium)
                     .color(if selected { k.c.text_strong } else { seg_k.c.text_muted })
+                    .min_w(0.0).shrink().truncate().help_when_truncated(label.clone())
                     .a11y_hidden(),
             );
         group = group.child(pill);
     }
-    row()
-        .key(format!("{key}-track"))
-        .padding(4.0)
-        .radius(k.radius.md)
-        .fill(k.c.layer_01)
-        .child(group)
+    row().w(520.0).shrink().min_w(0.0).justify_end().child(
+        row().key(format!("{key}-track"))
+            .shrink().min_w(0.0)
+            .padding(4.0)
+            .radius(k.radius.md)
+            .fill(k.c.layer_01)
+            .child(group),
+    )
 }
 
 fn ffmpeg_row(s: &App, k: &Kit) -> El {
@@ -334,7 +381,7 @@ fn ffmpeg_row(s: &App, k: &Kit) -> El {
 fn browser_row(s: &App, k: &Kit) -> El {
     let (detail, status, glyph, color) = match s.tools.as_ref().map(|t| t.browser.as_ref()) {
         None => ("Checking for CloakBrowser…".into(), "Checking", &icons::CLOCK, k.c.text_muted),
-        Some(Some(version)) => (version.clone(), "Ready", &icons::CIRCLE_CHECK, k.c.success.fg),
+        Some(Some(version)) => (version.clone(), "Installed", &icons::CIRCLE_CHECK, k.c.text_muted),
         Some(None) => (
             "CloakBrowser downloads the first time an extension needs it.".into(),
             "On Demand", &icons::DOWNLOAD, k.c.text_muted,

@@ -24,6 +24,7 @@ lucide!(CHEVRON_LEFT, "chevron-left", r#"<path d="m15 18-6-6 6-6"/>"#);
 lucide!(CHEVRON_RIGHT, "chevron-right", r#"<path d="m9 18 6-6-6-6"/>"#);
 lucide!(CHEVRONS_UP_DOWN, "chevrons-up-down", r#"<path d="m7 15 5 5 5-5"/><path d="m7 9 5-5 5 5"/>"#);
 lucide!(CIRCLE_CHECK, "circle-check", r#"<circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/>"#);
+lucide!(CIRCLE_INFO, "circle-info", r#"<circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/>"#);
 lucide!(CIRCLE_X, "circle-x", r#"<circle cx="12" cy="12" r="10"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/>"#);
 lucide!(CLOCK, "clock", r#"<circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/>"#);
 lucide!(CLOUD_DOWNLOAD, "cloud-download", r#"<path d="M12 13v8l-4-4"/><path d="m12 21 4-4"/><path d="M4.393 15.269A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.436 8.284"/>"#);

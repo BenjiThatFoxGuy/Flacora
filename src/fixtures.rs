@@ -7,7 +7,7 @@ use crate::{
     library::Entry,
     runner::JobHandle,
     services,
-    store::{ExtensionStatus, Installed, Paths, Theme, Tools},
+    store::{ExtensionStatus, Installed, Paths, Theme, ThemePreset, Tools},
 };
 use rune::TextEdit;
 use serde_json::Value;
@@ -457,6 +457,12 @@ pub fn settings(s: &mut App) {
     *s = app();
     s.page = Page::Settings;
     s.installed.extend(["lucida", "doubledouble", "squigly"].map(installed));
+}
+
+pub fn settings_matcha(s: &mut App) {
+    settings(s);
+    s.settings.theme = Theme::Light;
+    s.settings.theme_preset = ThemePreset::Matcha;
 }
 
 pub fn settings_update_available(s: &mut App) {

@@ -1,12 +1,12 @@
 //! Small pieces shared by the pages.
 
-use super::theme::{CARD_PADDING, CARD_RADIUS, HEADING, PAGE_CONTENT_MAX_WIDTH, PAGE_INSET, SUBHEADING};
+use super::theme::{CARD_PADDING, Kit, PAGE_CONTENT_MAX_WIDTH, PAGE_INSET};
 use crate::app::App;
 use crate::extensions::ExtOption;
 use crate::icons;
 use crate::services::Service;
 use rune::{Color, El, Icon, Image, LiveRegion, ScrollSpec, SurfaceFit, TextEdit, TextStyle, Tx, col, el, icon, row, text};
-use rune_kit::{Badge, BadgeVariant, Button, ButtonVariant, ControlSize, IconButton, IconButtonVariant, Kit, ScrollBar, ScrollBarStyle, SegmentedControl, StateColors};
+use rune_kit::{Badge, BadgeVariant, Button, ButtonVariant, ControlSize, IconButton, IconButtonVariant, ScrollBar, ScrollBarStyle, SegmentedControl, StateColors};
 
 /// Formats extension-provided captions for display while preserving mixed-case names and paths.
 pub fn title_case_label(label: &str) -> String {
@@ -51,7 +51,7 @@ pub fn page_header_with_subtitle(k: &Kit, title: &str, subtitle: El, actions: Ve
                 .grow(1.0)
                 .shrink()
                 .min_w(220.0)
-                .child(text(title.to_owned()).role("heading").font(HEADING).color(k.c.text_strong))
+                .child(text(title.to_owned()).role("heading").font(k.heading).color(k.c.text_strong))
                 .child(subtitle),
         );
     for action in actions {
@@ -62,7 +62,7 @@ pub fn page_header_with_subtitle(k: &Kit, title: &str, subtitle: El, actions: Ve
 
 /// A heading above a group of rows, with an optional count.
 pub fn section(k: &Kit, title: &str, count: Option<usize>) -> El {
-    let mut head = row().gap(8.0).center_y().child(text(title.to_owned()).role("heading").font(SUBHEADING).color(k.c.text_strong));
+    let mut head = row().gap(8.0).center_y().child(text(title.to_owned()).role("heading").font(k.subheading).color(k.c.text_strong));
     if let Some(count) = count {
         head = head.child(badge(k, count.to_string()));
     }
@@ -76,7 +76,7 @@ pub fn card(k: &Kit, key: impl Into<String>, body: El) -> El {
         .w_full()
         .min_w(0.0)
         .padding(CARD_PADDING)
-        .radius(CARD_RADIUS)
+        .radius(k.card_radius)
         .fill(k.c.surface_raised_base)
         .border(1.0, k.c.border_base)
         .child(body)
@@ -102,7 +102,7 @@ pub fn segmented(k: &Kit, key: &str, control: SegmentedControl) -> El {
         .radius(k.radius.md)
         .fill(k.c.layer_01)
         .child(
-            control.fit().build(super::theme::segmented_kit(k.dark))
+            control.fit().build(&k.segmented)
                 .gap(4.0)
                 .grow(1.0)
                 .max_w(760.0)
@@ -151,12 +151,12 @@ pub fn error_banner(k: &Kit, key: String, title: &str, detail: El, action: Optio
 pub fn confirmation_dialog(k: &Kit, key: &str, title: &str, detail: String, trigger: &str, keep: El, confirm: El) -> El {
     let dialog = col().key(format!("{key}-dialog")).role("alertdialog")
         .label(title.to_owned()).description(detail.clone()).w_full().max_w(416.0)
-        .padding(16.0).gap(16.0).radius(CARD_RADIUS)
+        .padding(16.0).gap(16.0).radius(k.card_radius)
         .fill(k.c.surface_float).border(1.0, k.c.border_base)
         .modal(true, |s: &mut App| s.confirm_action = None)
         .modal_click_outside(false).focus_return(trigger.to_owned())
         .child(col().gap(4.0)
-            .child(text(title.to_owned()).role("heading").font(SUBHEADING).color(k.c.text_strong))
+            .child(text(title.to_owned()).role("heading").font(k.subheading).color(k.c.text_strong))
             .child(text(detail).key(format!("{key}-counts")).font(k.ty.body).color(k.c.text_muted).wrap()))
         .child(row().gap(8.0).justify_end().child(keep.autofocus().default_button()).child(confirm));
     el().key(format!("{key}-overlay")).absolute(0.0, 0.0).w_full().h_full()
@@ -219,7 +219,7 @@ pub fn cover(k: &Kit, image: Option<&Image>, size: f32) -> El {
     }
 }
 
-pub fn icon_button(k: &Kit, key: &str, glyph: &'static Icon, label: &str, on_press: impl Fn(&mut App) + 'static) -> El {
+pub fn icon_button(k: &rune_kit::Kit, key: &str, glyph: &'static Icon, label: &str, on_press: impl Fn(&mut App) + 'static) -> El {
     IconButton::new(glyph).variant(IconButtonVariant::Ghost).control_size(ControlSize::Large).label(label).help(label).on_press(on_press)
         .build(k).key(key.to_owned())
 }
@@ -240,7 +240,7 @@ pub fn clear_input_button(
 }
 
 pub fn danger_icon_button(k: &Kit, key: &str, glyph: &'static Icon, label: &str, on_press: impl Fn(&mut App) + 'static) -> El {
-    icon_button(super::theme::danger_icon_kit(k.dark), key, glyph, label, on_press)
+    icon_button(&k.danger_icon, key, glyph, label, on_press)
 }
 
 pub fn button(k: &Kit, key: &str, label: &str, glyph: Option<&'static Icon>, variant: ButtonVariant, on_press: impl Fn(&mut App) + 'static) -> El {
@@ -248,7 +248,7 @@ pub fn button(k: &Kit, key: &str, label: &str, glyph: Option<&'static Icon>, var
     if let Some(glyph) = glyph {
         b = b.icon(glyph);
     }
-    let build_kit = if variant == ButtonVariant::Danger { super::theme::danger_button_kit(k.dark) } else { k };
+    let build_kit = if variant == ButtonVariant::Danger { &k.danger_button } else { k };
     let button = b.build(build_kit).h(32.0).key(key.to_owned());
     if variant == ButtonVariant::Danger { button.fill(k.c.danger.bg) } else { button }
 }
@@ -264,7 +264,7 @@ pub fn empty_state(k: &Kit, key: &str, glyph: &'static Icon, title: &str, body: 
         .padding(20.0)
         .center()
         .child(icon(glyph, 32.0).color(k.c.icon_base).a11y_hidden())
-        .child(text(title.to_owned()).role("heading").level(3).font(SUBHEADING)
+        .child(text(title.to_owned()).role("heading").level(3).font(k.subheading)
             .color(k.c.text_strong).wrap().align(rune::Align::Center))
         .child(text(body.to_owned()).font(k.ty.small).color(k.c.text_muted)
             .max_w(360.0).wrap().align(rune::Align::Center))

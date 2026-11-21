@@ -90,6 +90,36 @@ fn settings_change_the_theme() {
 }
 
 #[test]
+fn theme_presets_apply_immediately_to_settings_and_download_rows() {
+    let mut rt = runtime_at(fixtures::queue, crate::MIN_WINDOW_SIZE);
+    tap(&mut rt, "nav-settings");
+
+    let fill = |rt: &Runtime<App>, key: &str| {
+        rt.elements().into_iter().find(|el| el.key.as_deref() == Some(key)).unwrap().fill
+    };
+    let settle = |rt: &mut Runtime<App>| {
+        for _ in 0..40 {
+            rt.frame(1.0 / 60.0);
+        }
+    };
+    for preset in ThemePreset::ALL {
+        tap(&mut rt, &format!("theme-preset-{}", preset.key()));
+        settle(&mut rt);
+        assert_eq!(rt.state.settings.theme_preset, preset);
+        assert_eq!(rt.state.settings.theme, store::Theme::System);
+        assert_eq!(fill(&rt, "window").hex(), theme::kit(preset, true).c.page.hex());
+    }
+
+    tap(&mut rt, "theme-preset-matcha");
+    tap(&mut rt, "theme/segment1");
+    settle(&mut rt);
+    assert_eq!(rt.state.settings.theme_preset, ThemePreset::Matcha);
+    assert_eq!(fill(&rt, "window").hex(), "#f0f0e0ff");
+    tap(&mut rt, "nav-downloads");
+    assert_eq!(fill(&rt, "job-1"), theme::kit(ThemePreset::Matcha, false).c.surface_raised_base);
+}
+
+#[test]
 fn settings_explains_how_to_get_ffmpeg_when_it_is_missing() {
     let mut rt = runtime(fixtures::settings_without_ffmpeg);
     tap(&mut rt, "nav-downloads");
@@ -100,23 +130,23 @@ fn settings_explains_how_to_get_ffmpeg_when_it_is_missing() {
 }
 
 #[test]
-fn installed_helpers_show_the_version_and_ready_status() {
+fn helpers_show_ready_ffmpeg_and_installed_browser_versions() {
     let mut rt = runtime(fixtures::home);
     tap(&mut rt, "nav-settings");
     let elements = rt.elements();
-    for (path, label, version) in [
-        ("/setting-ffmpeg/", "FFmpeg", "9.0"),
-        ("/setting-browser/", "Browser for Protected Sites", "145.0.7632.159.7"),
+    for (path, label, version, status) in [
+        ("/setting-ffmpeg/", "FFmpeg", "9.0", "Ready"),
+        ("/setting-browser/", "Browser for Protected Sites", "145.0.7632.159.7", "Installed"),
     ] {
         let visible_text: Vec<&str> = elements.iter().filter(|el| el.path.contains(path)).filter_map(|el| el.text.as_deref()).collect();
-        assert_eq!(visible_text, [label, version, "Ready"]);
+        assert_eq!(visible_text, [label, version, status]);
     }
 }
 
 #[test]
 fn settings_shows_browser_status_without_a_remove_action() {
     for (scene, status) in [
-        (fixtures::settings as fn(&mut App), "Ready"),
+        (fixtures::settings as fn(&mut App), "Installed"),
         (fixtures::settings_without_browser, "On Demand"),
     ] {
         let mut rt = runtime(scene);
@@ -142,10 +172,49 @@ fn settings_has_a_bottom_gutter_at_the_end_of_the_list() {
 #[test]
 fn long_settings_controls_wrap_below_their_labels_at_minimum_width() {
     let rt = runtime_at(fixtures::settings, (860.0, 580.0));
-    let ([row_x, row_y, row_w, _], _) = rt.presented("setting-default-qobuz").unwrap();
+    let ([row_x, _, row_w, _], _) = rt.presented("setting-default-qobuz").unwrap();
+    let ([_, label_y, _, label_h], _) = rt.presented("default-qobuz-help").unwrap();
     let ([track_x, track_y, track_w, _], _) = rt.presented("default-qobuz-track").unwrap();
-    assert!(track_y > row_y + 40.0, "the label should sit above the track");
-    assert!(track_x >= row_x && track_x + track_w <= row_x + row_w);
+    assert!(track_y > label_y + label_h, "the label should sit above the track");
+    assert!(track_x >= row_x && (track_x + track_w - (row_x + row_w - 4.0)).abs() < 0.1);
+}
+
+#[test]
+fn default_extension_controls_align_right_stay_compact_and_reveal_help_on_hover() {
+    let mut rt = runtime_at(fixtures::settings, (1080.0, 1040.0));
+    let ([x, _, width, height], _) = rt.presented("default-qobuz-track").unwrap();
+    let right = x + width;
+    let elements = rt.elements();
+    let segment = |key: &str, index| {
+        let suffix = format!("/{key}/segment{index}");
+        elements.iter().find(|el| el.path.ends_with(&suffix)).map(|el| el.rect)
+    };
+    let [_, _, width, pill_height] = segment("default-qobuz", 0).unwrap();
+    for key in ["default-qobuz", "default-tidal", "default-deezer", "default-amazon", "default-resolver"] {
+        let ([track_x, _, track_width, track_height], _) = rt.presented(&format!("{key}-track")).unwrap();
+        assert!((track_x + track_width - right).abs() < 0.1, "{key}");
+        assert_eq!(track_height, height, "{key}");
+        let mut previous = segment(key, 0).unwrap();
+        assert_eq!((previous[2], previous[3]), (width, pill_height), "{key}");
+        for current in (1..).map_while(|index| segment(key, index)) {
+            assert!((current[0] - (previous[0] + previous[2]) - 4.0).abs() < 0.1, "{key}");
+            previous = current;
+        }
+        assert!((track_x + track_width - (previous[0] + previous[2]) - 4.0).abs() < 0.1, "{key}");
+    }
+
+    let help = "Finds Spotify, Apple Music and YouTube tracks on a service you can download from.";
+    assert!(elements.iter().all(|el| el.text.as_deref() != Some(help)));
+    let (x, y) = rt.find("default-resolver-help").unwrap();
+    rt.pointer_move(x, y);
+    rt.frame(0.0);
+    rt.frame(rt.help_delay + 0.2);
+    assert_eq!(rt.help_tooltip().map(|(text, _)| text), Some(help));
+
+    tap(&mut rt, "default-resolver/segment1");
+    assert_eq!(rt.state.settings.preferred.get(crate::app::RESOLVER_KEY).map(String::as_str), Some("odesli"));
+    tap(&mut rt, "default-resolver/segment0");
+    assert!(!rt.state.settings.preferred.contains_key(crate::app::RESOLVER_KEY));
 }
 
 #[test]
@@ -375,8 +444,15 @@ fn custom_pickers_and_selectable_cards_expose_astryx_accessibility_and_target_si
 
     let mut settings = runtime_at(fixtures::settings, (1080.0, 820.0));
     let tree = settings.accessibility_json();
-    assert_eq!(find_a11y(&tree, "theme").and_then(|n| n.get("name")).and_then(|v| v.as_str()), Some("Theme"));
+    assert_eq!(find_a11y(&tree, "theme").and_then(|n| n.get("name")).and_then(|v| v.as_str()), Some("Color Mode"));
+    assert_eq!(find_a11y(&tree, "theme-presets").and_then(|n| n.get("name")).and_then(|v| v.as_str()), Some("Theme"));
     assert_eq!(find_a11y(&tree, "default-tidal").and_then(|n| n.get("name")).and_then(|v| v.as_str()), Some("Tidal"));
+
+    tap(&mut settings, "theme-preset-stone");
+    let tree = settings.accessibility_json();
+    let stone = find_a11y(&tree, "theme-preset-stone").unwrap();
+    assert_eq!(stone.get("name").and_then(|v| v.as_str()), Some("Stone"));
+    assert!(stone.get("states").and_then(|v| v.as_array()).is_some_and(|s| s.iter().any(|v| v.as_str() == Some("checked"))));
 
     // Wrapping default_picker exposes radio checked state and supports arrow-key roving.
     tap(&mut settings, "default-tidal/segment2");

@@ -347,6 +347,7 @@ impl App {
         };
         let manifest = job.extension.manifest.clone();
         let (data, browser) = (self.paths.data(&manifest.id), self.paths.browser());
+        let flacora_home = std::path::absolute(&self.paths.root).unwrap_or_else(|_| self.paths.root.clone());
         let output_dir = job.output.clone();
         let layout = job.layout;
         let url = job.url.clone();
@@ -397,6 +398,10 @@ impl App {
                 browser: &browser_text,
             };
             let mut env = extensions::command_env(&manifest, &fill);
+            if manifest.requires.iter().any(|required| required == "ffmpeg") {
+                env.retain(|(key, _)| !key.eq_ignore_ascii_case("FLACORA_HOME"));
+                env.push(("FLACORA_HOME".into(), flacora_home.to_string_lossy().into_owned()));
+            }
             if has_monochrome {
                 env.push(("FLACORA_MONOCHROME".into(), "1".into()));
             }

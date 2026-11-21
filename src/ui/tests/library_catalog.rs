@@ -36,7 +36,7 @@ fn download_progress_follows_astryx_and_switches_between_reported_stages() {
         assert_eq!(track.radius, 4.0);
         assert_eq!(fill.radius, 4.0);
         assert_eq!(track.target[3], 8.0);
-        assert_eq!(track.fill, theme::kit(true).c.border_strong);
+        assert_eq!(track.fill, theme::kit(ThemePreset::Neutral, true).c.border_strong);
         (fill.loop_phase, fill.target[2], track.target[2])
     };
     let (loop_phase, segment_width, track_width) = track_and_fill(&rt, "moving-fill");
@@ -62,7 +62,7 @@ fn download_progress_follows_astryx_and_switches_between_reported_stages() {
 
 #[test]
 fn destructive_buttons_use_the_danger_palette() {
-    let danger = theme::kit(true).c.danger;
+    let danger = theme::kit(ThemePreset::Neutral, true).c.danger;
     for (scene, key, filled) in [
         (fixtures::queue_cancel_confirmation as fn(&mut App), "confirm-cancel-all", true),
         (fixtures::queue, "cancel-1", false),

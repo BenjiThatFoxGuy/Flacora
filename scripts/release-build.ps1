@@ -1,6 +1,16 @@
 # Shared settings for native release builds.
 
-function Get-ReleaseTarget([string] $Root) {
+function Get-ReleaseTarget([string] $Root, [string] $BuildRoot) {
+    $buildDirectory = 'target/release-build'
+    if ($IsLinux) {
+        $release = Get-Content -LiteralPath /etc/os-release -Raw
+        if ($release -cnotmatch '(?m)^ID="?ubuntu"?\r?$' -or
+            $release -cnotmatch '(?m)^VERSION_ID="?22\.04"?\r?$') {
+            throw 'Linux releases must be built on Ubuntu 22.04 LTS (glibc 2.35). On Windows, use the Ubuntu-22.04 WSL distro.'
+        }
+        $buildDirectory = 'target/release-build-ubuntu-22.04'
+    }
+
     Push-Location $Root
     try {
         $version = rustc -vV
@@ -21,7 +31,7 @@ function Get-ReleaseTarget([string] $Root) {
     @{
         Triple = $triple
         Platform = $platform
-        Directory = Join-Path $Root 'target/release-build'
+        Directory = Join-Path $BuildRoot $buildDirectory
         ExeSuffix = if ($triple -like '*-windows-*') { '.exe' } else { '' }
     }
 }

@@ -8,12 +8,13 @@ mod settings;
 mod theme;
 mod widgets;
 
-pub use theme::FONT;
+pub use theme::FONTS;
 
 use crate::app::{App, Notification, NotificationKind, Page};
 use crate::{icons, store};
 use rune::{Chord, ChordKey, ChordMod, Cursor, Cx, El, Icon, Image, ImageCache, SurfaceFit, Transition, col, el, icon, row, text};
-use rune_kit::{Divider, Kit, Sidebar, SidebarRow, Toast, ToastRegion};
+use rune_kit::{Divider, Sidebar, SidebarRow, Toast, ToastRegion};
+use theme::Kit;
 
 pub const SIDEBAR: f32 = 232.0;
 const SIDEBAR_ROW_HEIGHT: f32 = 36.0;
@@ -49,7 +50,9 @@ pub fn project_logos(cache: &ImageCache) -> [Image; 2] {
 }
 
 pub fn view(s: &App, cx: &mut Cx<App>) -> El {
-    let k = theme::kit(s.dark(cx.system_dark()));
+    let dark = s.dark(cx.system_dark());
+    let k = theme::kit(s.settings.theme_preset, dark);
+    cx.foreground(k.c.text_base);
     // Keep the region mounted while its last notification fades out.
     let mut overlays = vec![notifications(s, k)];
     let page = match s.page {
@@ -57,7 +60,7 @@ pub fn view(s: &App, cx: &mut Cx<App>) -> El {
         Page::Catalog => catalog::page(s, k),
         Page::Library => library::page(s, k),
         Page::Extensions => extensions::page(s, k, &mut overlays),
-        Page::Settings => settings::page(s, k),
+        Page::Settings => settings::page(s, k, dark),
     };
     let content = col().key("content").grow(1.0).shrink().min_w(0.0).h_full().items_center().child(page);
     // Extension packages can be dropped anywhere on the window.
@@ -100,7 +103,7 @@ fn sidebar(s: &App, k: &Kit) -> El {
         .child(logo)
         .child(
             col()
-                .child(text("Flacora").font(theme::SUBHEADING).color(k.c.text_strong))
+                .child(text("Flacora").font(k.subheading).color(k.c.text_strong))
                 .child(text(concat!("v", env!("CARGO_PKG_VERSION"))).font(k.ty.text_xsmall).color(k.c.text_faint)),
         );
     let active = s.active_jobs();
@@ -220,7 +223,7 @@ fn notification(k: &Kit, key: &str, note: &Notification, has_undo: bool, dismiss
         NotificationKind::Warning => ("Warning", &icons::TRIANGLE_ALERT, k.c.warning),
         NotificationKind::Error => ("Error", &icons::CIRCLE_X, k.c.danger),
     };
-    let status_kit = theme::toast_kit(k.dark, note.kind);
+    let status_kit = k.toast(note.kind);
 
     let mut toast = Toast::new(key, title)
         .description(&note.message)
@@ -233,7 +236,7 @@ fn notification(k: &Kit, key: &str, note: &Notification, has_undo: bool, dismiss
         .build(status_kit)
         .w(340.0)
         .border(1.0, colors.border.alpha(0.28))
-        .radius(theme::CARD_RADIUS)
+        .radius(k.card_radius)
         .transition(Transition::opacity())
         .on_hover_change(|s: &mut App, inside, _| s.toast_hovered = inside)
 }
@@ -245,7 +248,7 @@ fn drop_overlay(k: &Kit) -> El {
         .h_full()
         .gap(10.0)
         .center()
-        .radius(theme::CARD_RADIUS)
+        .radius(k.card_radius)
         .border(2.0, k.c.border_focus)
         .border_dash(8.0, 4.0)
         .fill(k.c.bg_base.alpha(0.97))
@@ -256,7 +259,7 @@ fn drop_overlay(k: &Kit) -> El {
                 .center()
                 .child(icon(&icons::FILE_UP, 28.0).color(k.c.icon_base)),
         )
-        .child(text("Drop to Install").font(theme::HEADING).color(k.c.text_strong))
+        .child(text("Drop to Install").font(k.heading).color(k.c.text_strong))
         .child(text(format!("Flacora Extension Packages (.{})", store::PACKAGE)).font(k.ty.small).color(k.c.text_muted));
     // Absolute, so it covers the window instead of being laid out beside it.
     el().key("drop-overlay").absolute(0.0, 0.0).w_full().h_full().padding(28.0).fill(k.c.scrim).child(card)

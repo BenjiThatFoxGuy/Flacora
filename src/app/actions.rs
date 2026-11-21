@@ -6,7 +6,7 @@ use crate::{
     library::{self, Entry},
     package_picker, runner,
     services::{self, Service},
-    store::{self, ExtensionStatus, Installed, Theme},
+    store::{self, ExtensionStatus, Installed, Theme, ThemePreset},
 };
 use rune::{FileDialogOptions, Tx};
 use std::path::PathBuf;
@@ -175,6 +175,13 @@ impl App {
     pub fn set_theme(&mut self, theme: Theme) {
         self.settings.theme = theme;
         self.save_settings();
+    }
+
+    pub fn set_theme_preset(&mut self, preset: ThemePreset) {
+        if self.settings.theme_preset != preset {
+            self.settings.theme_preset = preset;
+            self.save_settings();
+        }
     }
 
     pub(super) fn save_settings(&mut self) {

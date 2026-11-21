@@ -1,95 +1,104 @@
-//! Native token mapping for the Astryx Neutral component gallery.
-//! Source: github.com/meta/astryx at 82ff7bbf64867ab047db3235d24667d15a72f97d,
-//! packages/themes/neutral/src/neutralTheme.ts and neutralPaletteRefs.generated.ts.
+//! Flacora's Rune Kit styling and its Astryx theme presets.
 
+mod presets;
+
+use crate::app::NotificationKind;
 use crate::icons;
+use crate::store::ThemePreset;
 use rune::{Color, Family, Shadow, TextStyle};
-use rune_kit::{Kit, Radius, StateColors, Type};
-use std::sync::OnceLock;
+use rune_kit::{Kit as RuneKit, Radius, StateColors, Type};
+use std::{ops::Deref, sync::OnceLock};
 
-pub const FONT: &[u8] = include_bytes!("../../assets/Figtree.ttf");
+pub use presets::FONTS;
 pub const PAGE_INSET: f32 = 24.0;
 pub const PAGE_CONTENT_MAX_WIDTH: f32 = 1120.0;
-pub const CARD_RADIUS: f32 = 12.0;
 pub const CARD_PADDING: f32 = 12.0;
 pub const FOCUS_RING_WIDTH: f32 = 2.0;
 pub const FOCUS_RING_OFFSET: f32 = 2.0;
-pub const HEADING: TextStyle = TextStyle::new(24.0, 600.0).lh(32.0);
-pub const SUBHEADING: TextStyle = TextStyle::new(17.0, 700.0).lh(24.0);
 
-pub fn kit(dark: bool) -> &'static Kit {
-    static DARK: OnceLock<Kit> = OnceLock::new();
-    static LIGHT: OnceLock<Kit> = OnceLock::new();
-    let cache = if dark { &DARK } else { &LIGHT };
-    cache.get_or_init(|| build(dark))
+pub struct Kit {
+    base: RuneKit,
+    pub heading: TextStyle,
+    pub subheading: TextStyle,
+    pub card_radius: f32,
+    pub drop_hint: Color,
+    pub segmented: RuneKit,
+    pub danger_button: RuneKit,
+    pub danger_icon: RuneKit,
+    toasts: [RuneKit; 3],
 }
 
-pub fn segmented_kit(dark: bool) -> &'static Kit {
-    static DARK: OnceLock<Kit> = OnceLock::new();
-    static LIGHT: OnceLock<Kit> = OnceLock::new();
-    let cache = if dark { &DARK } else { &LIGHT };
-    cache.get_or_init(|| {
-        let mut k = kit(dark).clone();
-        k.c.border_base = Color::TRANSPARENT;
-        k.c.border_strong = Color::TRANSPARENT;
-        if dark {
-            // Astryx neutralTheme.ts segmented-control-item dark contrast stop (neutral.dark[80]).
-            k.c.text_muted = rune::color::hex("#c6c6c6").expect("Astryx color");
-        }
-        k
-    })
-}
+impl Deref for Kit {
+    type Target = RuneKit;
 
-pub fn danger_button_kit(dark: bool) -> &'static Kit {
-    static DARK: OnceLock<Kit> = OnceLock::new();
-    static LIGHT: OnceLock<Kit> = OnceLock::new();
-    let cache = if dark { &DARK } else { &LIGHT };
-    cache.get_or_init(|| {
-        let mut k = kit(dark).clone();
-        k.c.border_focus = k.c.danger.border;
-        k
-    })
-}
-
-pub fn danger_icon_kit(dark: bool) -> &'static Kit {
-    static DARK: OnceLock<Kit> = OnceLock::new();
-    static LIGHT: OnceLock<Kit> = OnceLock::new();
-    let cache = if dark { &DARK } else { &LIGHT };
-    cache.get_or_init(|| {
-        let mut k = kit(dark).clone();
-        k.c.text_base = k.c.danger.icon;
-        k.c.hover = k.c.danger.fg.alpha(0.10);
-        k.c.pressed = k.c.danger.fg.alpha(0.18);
-        k.c.border_focus = k.c.danger.border;
-        k
-    })
-}
-
-pub fn toast_kit(dark: bool, kind: crate::app::NotificationKind) -> &'static Kit {
-    use crate::app::NotificationKind;
-    static DARK: OnceLock<[Kit; 3]> = OnceLock::new();
-    static LIGHT: OnceLock<[Kit; 3]> = OnceLock::new();
-    let cache = if dark { &DARK } else { &LIGHT };
-    let kits = cache.get_or_init(|| {
-        let base = kit(dark);
-        [base.c.success, base.c.warning, base.c.danger].map(|colors| {
-            let mut k = base.clone();
-            k.c.layer_01 = colors.bg;
-            k.c.text_base = colors.fg;
-            k.c.text_muted = colors.fg;
-            k.c.icon_muted = colors.icon;
-            k.c.border_focus = colors.fg;
-            k
-        })
-    });
-    match kind {
-        NotificationKind::Success => &kits[0],
-        NotificationKind::Warning => &kits[1],
-        NotificationKind::Error => &kits[2],
+    fn deref(&self) -> &RuneKit {
+        &self.base
     }
 }
 
-fn build(dark: bool) -> Kit {
+impl Kit {
+    pub fn toast(&self, kind: NotificationKind) -> &RuneKit {
+        &self.toasts[match kind {
+            NotificationKind::Success => 0,
+            NotificationKind::Warning => 1,
+            NotificationKind::Error => 2,
+        }]
+    }
+}
+
+pub fn kit(preset: ThemePreset, dark: bool) -> &'static Kit {
+    static KITS: [[OnceLock<Kit>; 2]; ThemePreset::ALL.len()] =
+        [const { [const { OnceLock::new() }; 2] }; ThemePreset::ALL.len()];
+    // Gothic uses the same dark palette in both modes.
+    let dark = dark || preset == ThemePreset::Gothic;
+    KITS[preset as usize][usize::from(dark)].get_or_init(|| build(preset, dark))
+}
+
+fn build(preset: ThemePreset, dark: bool) -> Kit {
+    let mut base = neutral(dark);
+    let mut heading = TextStyle::new(24.0, 600.0).lh(32.0);
+    let mut subheading = TextStyle::new(17.0, 700.0).lh(24.0);
+    let mut card_radius = 12.0;
+    if let Some((tokens, body_family, heading_family)) = presets::load(preset, dark) {
+        presets::apply(&tokens, &mut base);
+        presets::set_body_family(&mut base.ty, body_family);
+        heading = heading.family(heading_family);
+        subheading = subheading.family(heading_family);
+        card_radius = tokens.num("radius.container");
+    }
+
+    let drop_hint = if dark && preset == ThemePreset::Neutral {
+        rune::color::hex("#c6c6c6").expect("Astryx color")
+    } else {
+        base.c.text_muted
+    };
+    let mut segmented = base.clone();
+    segmented.c.border_base = Color::TRANSPARENT;
+    segmented.c.border_strong = Color::TRANSPARENT;
+    segmented.c.text_muted = drop_hint;
+
+    let mut danger_button = base.clone();
+    danger_button.c.border_focus = base.c.danger.border;
+
+    let mut danger_icon = danger_button.clone();
+    danger_icon.c.text_base = base.c.danger.icon;
+    danger_icon.c.hover = base.c.danger.fg.alpha(0.10);
+    danger_icon.c.pressed = base.c.danger.fg.alpha(0.18);
+
+    let toasts = [base.c.success, base.c.warning, base.c.danger].map(|colors| {
+        let mut k = base.clone();
+        k.c.layer_01 = colors.bg;
+        k.c.text_base = colors.fg;
+        k.c.text_muted = colors.fg;
+        k.c.icon_muted = colors.icon;
+        k.c.border_focus = colors.fg;
+        k
+    });
+    Kit { base, heading, subheading, card_radius, drop_hint, segmented, danger_button, danger_icon, toasts }
+}
+
+// Neutral follows Astryx at 82ff7bbf64867ab047db3235d24667d15a72f97d.
+fn neutral(dark: bool) -> RuneKit {
     let color = |light, night| rune::color::hex(if dark { night } else { light }).expect("Astryx color");
     let body = color("#f1f1f1", "#1b1b1b");
     let surface = color("#ffffff", "#262626");
@@ -108,7 +117,7 @@ fn build(dark: bool) -> Kit {
     let darken = Color::BLACK.alpha(0.10);
     let lighten = Color::WHITE.alpha(0.12);
 
-    let mut k = Kit::neutral(dark);
+    let mut k = RuneKit::neutral(dark);
     let c = &mut k.c;
     c.page = body;
     c.bg_base = surface;

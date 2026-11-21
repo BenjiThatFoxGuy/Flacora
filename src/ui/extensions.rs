@@ -1,6 +1,6 @@
 //! Locally installed extensions and the package drop target.
 
-use super::theme::{FOCUS_RING_OFFSET, FOCUS_RING_WIDTH, SUBHEADING};
+use super::theme::{FOCUS_RING_OFFSET, FOCUS_RING_WIDTH, Kit};
 use super::widgets::{self, badge, badge_with_icon, card, section, service_chip, status_badge};
 use crate::app::{App, ConfirmAction};
 use crate::extensions::Kind;
@@ -8,7 +8,7 @@ use crate::icons;
 use crate::services;
 use crate::store::{self, ExtensionStatus, Installed};
 use rune::{Cursor, El, GrowthSpec, Link, LinkPaint, Spring, Tx, col, el, icon, row, text};
-use rune_kit::{Button, ButtonVariant, Divider, Kit, Spinner};
+use rune_kit::{Button, ButtonVariant, Divider, Spinner};
 
 const CATEGORIES: [(Kind, &str); 4] = [
     (Kind::Downloader, "downloaders"),
@@ -153,18 +153,14 @@ fn drop_zone(s: &App, k: &Kit) -> El {
     };
 
     let accent = if active { k.c.border_focus } else { k.c.text_strong };
-    let hint_color = if k.dark {
-        rune::color::hex("#c6c6c6").expect("Astryx color")
-    } else {
-        k.c.text_muted
-    };
+    let hint_color = k.drop_hint;
     let symbol = if installing {
         Spinner::new().size(24.0).build(k)
     } else {
         icon(&icons::FILE_UP, 28.0).color(accent)
     };
     let mut message = col().center().gap(6.0)
-        .child(text(label).role(if installing { "status" } else { "heading" }).font(SUBHEADING).color(accent));
+        .child(text(label).role(if installing { "status" } else { "heading" }).font(k.subheading).color(accent));
     if !installing {
         message = message.child(
             text("Drop them anywhere in this window, or click here to browse.").font(k.ty.body).color(hint_color),

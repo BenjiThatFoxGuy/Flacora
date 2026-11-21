@@ -1,6 +1,6 @@
 //! Library: every finished download, newest first.
 
-use super::widgets::{self, card, cover};
+use super::{theme::Kit, widgets::{self, card, cover}};
 use crate::app::{App, LibrarySort, Page};
 use crate::extensions::Kind;
 use crate::icons;
@@ -8,10 +8,10 @@ use crate::jobs::now;
 use crate::library::Entry;
 use crate::services;
 use rune::{Cursor, El, GrowthSpec, Tx, col, el, icon, row, text};
-use rune_kit::{ButtonVariant, Collapsible, Divider, Kit, SegmentedControl, TextInput};
+use rune_kit::{ButtonVariant, Collapsible, Divider, SegmentedControl, TextInput};
 use std::{borrow::Cow, rc::Rc};
 
-pub fn page(s: &App, k: &Kit) -> El {
+pub fn page(s: &App, k: &'static Kit) -> El {
     let mut actions = Vec::new();
     if !s.history.is_empty() {
         let mut search = TextInput::new(&s.search)
@@ -100,12 +100,11 @@ fn toolbar(s: &App, k: &Kit) -> El {
     row().key("library-toolbar").w_full().gap(10.0).center_y().flex_wrap().child(filters).child(sort)
 }
 
-fn list(_s: &App, k: &Kit, entries: Vec<(usize, &Entry)>) -> El {
+fn list(_s: &App, k: &'static Kit, entries: Vec<(usize, &Entry)>) -> El {
     if entries.is_empty() {
         return widgets::empty_state(k, "library-no-match", &icons::SEARCH, "No Matches", "Nothing in the library matches that search.", None);
     }
     let now = now();
-    let dark = k.dark;
     let indices: Rc<Vec<usize>> = Rc::new(entries.into_iter().map(|(index, _)| index).collect());
     let key_indices = indices.clone();
     let build_indices = indices.clone();
@@ -118,7 +117,6 @@ fn list(_s: &App, k: &Kit, entries: Vec<(usize, &Entry)>) -> El {
             Cow::Owned(format!("library-row-{date}-{index}"))
         },
         move |s: &App, position| {
-            let k = super::theme::kit(dark);
             let index = build_indices[position];
             let Some(entry) = s.history.get(index) else {
                 return el();

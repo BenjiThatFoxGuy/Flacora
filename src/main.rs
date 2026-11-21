@@ -130,7 +130,7 @@ fn main() {
     let _ = rune::set_app_icon(LOGO);
     let app = rune::App::new(AppSpec::<App> {
         min_size: Some(MIN_WINDOW_SIZE),
-        fonts: &[ui::FONT],
+        fonts: ui::FONTS,
         families: ("Figtree", "ui-monospace"),
         setup: Some(setup),
         poll: Some(poll),
@@ -177,6 +177,7 @@ fn main() {
             ("imported", fixtures::imported),
             ("notifications", fixtures::notifications),
             ("settings", fixtures::settings),
+            ("settings-matcha", fixtures::settings_matcha),
             ("settings-update-available", fixtures::settings_update_available),
             ("output-settings", fixtures::output_settings),
             ("settings-auto-tag-available", fixtures::auto_tag_available_settings),

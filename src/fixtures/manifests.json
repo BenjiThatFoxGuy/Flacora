@@ -54,7 +54,7 @@
   {
     "id": "cyan-dl",
     "name": "Cyan",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "description": "cyan-dl.pages.dev",
     "services": [
       "Amazon Music"
@@ -130,7 +130,7 @@
   {
     "id": "doubledouble",
     "name": "DoubleDouble",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "description": "doubledouble.top",
     "services": [
       "Amazon Music",
@@ -189,7 +189,7 @@
   {
     "id": "flacdownloader",
     "name": "FlacDownloader",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "description": "flacdownloader.com",
     "services": [
       "Qobuz",
@@ -286,7 +286,7 @@
   {
     "id": "lucida",
     "name": "Lucida",
-    "version": "1.0.1",
+    "version": "1.0.2",
     "description": "lucida.to",
     "services": [
       "Amazon Music",
@@ -366,7 +366,7 @@
   {
     "id": "monochrome",
     "name": "Monochrome",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "kind": "downloader",
     "description": "monochrome.st",
     "services": [
@@ -506,7 +506,7 @@
   {
     "id": "odskyler",
     "name": "Rhythmax",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "description": "tidal.odskyler.com",
     "services": [
       "Tidal"

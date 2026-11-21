@@ -1,14 +1,15 @@
 //! Downloads: the link box with its route, then the queue.
 
+use super::theme::Kit;
 use super::widgets::{self, badge, card, cover, section, service_chip, status_badge, title_case_label};
 use crate::app::{App, ConfirmAction, Page, RESOLVER_KEY};
 use crate::{icons, store};
 use crate::jobs::{Job, Status};
 use rune::{El, GrowthSpec, LoopSpec, ScrollSpec, Transition, Tx, col, el, icon, row, text};
-use rune_kit::{Button, ButtonVariant, ControlSize, Kit, Menu, MenuItem, Placement, ScrollBar, SegmentedControl, Spinner, TextInput};
+use rune_kit::{Button, ButtonVariant, ControlSize, Menu, MenuItem, Placement, ScrollBar, SegmentedControl, Spinner, TextInput};
 use std::borrow::Cow;
 
-pub fn page(s: &App, k: &Kit, overlays: &mut Vec<El>) -> El {
+pub fn page(s: &App, k: &'static Kit, overlays: &mut Vec<El>) -> El {
     let active = s.active_jobs();
     let failed_count = s.jobs.iter().filter(|j| matches!(j.status, Status::Failed(_))).count();
     let cancelled_count = s.jobs.iter().filter(|j| matches!(j.status, Status::Cancelled)).count();
@@ -295,7 +296,7 @@ fn empty(s: &App, k: &Kit) -> El {
     widgets::empty_state(k, "queue-empty", &icons::LIST_MUSIC, title, &body, action)
 }
 
-fn queue(s: &App, k: &Kit, has_failures: bool, overlays: &mut Vec<El>) -> El {
+fn queue(s: &App, k: &'static Kit, has_failures: bool, overlays: &mut Vec<El>) -> El {
     let active = s.active_jobs();
     let queued_count = s.jobs.iter().filter(|j| j.status == Status::Queued).count();
     let finished = s.jobs.len() - active;
@@ -339,7 +340,6 @@ fn queue(s: &App, k: &Kit, has_failures: bool, overlays: &mut Vec<El>) -> El {
     if finished > 0 {
         queue_head = queue_head.child(queue_menu(s, k, has_failures, overlays));
     }
-    let dark = k.dark;
     let rows = col().key("queue-rows").w_full().growth(GrowthSpec::default()).virtual_rows(
         s.jobs.len(),
         96.0,
@@ -350,7 +350,6 @@ fn queue(s: &App, k: &Kit, has_failures: bool, overlays: &mut Vec<El>) -> El {
                 .unwrap_or_else(|| Cow::Owned(format!("job-row-missing-{i}")))
         },
         move |s: &App, i| {
-            let k = super::theme::kit(dark);
             let Some(job) = s.jobs.get(i) else {
                 return el();
             };

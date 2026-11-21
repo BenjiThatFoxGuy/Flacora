@@ -3,7 +3,7 @@ mod library_catalog;
 mod settings;
 
 use super::*;
-use crate::{fixtures, jobs::Status};
+use crate::{fixtures, jobs::Status, store::ThemePreset};
 use rune::{Env, Runtime};
 use std::path::PathBuf;
 
@@ -189,7 +189,7 @@ fn status_toasts_use_their_theme_colors_and_expire_independently() {
     let mut rt = runtime(fixtures::notifications);
     rt.poll = Some(crate::poll);
     rt.frame(1.0 / 60.0);
-    let k = theme::kit(true);
+    let k = theme::kit(ThemePreset::Neutral, true);
     let elements = rt.elements();
     for (key, label, fill) in [("info", "Success", k.c.success.bg), ("notice", "Error", k.c.danger.bg)] {
         let toast = elements.iter().find(|el| el.key.as_deref() == Some(key)).unwrap();

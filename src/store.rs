@@ -110,12 +110,55 @@ impl Theme {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ThemePreset {
+    #[default]
+    Neutral,
+    Butter,
+    Chocolate,
+    Gothic,
+    Matcha,
+    Stone,
+    Y2k,
+}
+
+impl ThemePreset {
+    pub const ALL: [Self; 7] = [
+        Self::Neutral, Self::Butter, Self::Chocolate, Self::Gothic, Self::Matcha, Self::Stone, Self::Y2k,
+    ];
+
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::Neutral => "neutral",
+            Self::Butter => "butter",
+            Self::Chocolate => "chocolate",
+            Self::Gothic => "gothic",
+            Self::Matcha => "matcha",
+            Self::Stone => "stone",
+            Self::Y2k => "y2k",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Neutral => "Neutral",
+            Self::Butter => "Butter",
+            Self::Chocolate => "Chocolate",
+            Self::Gothic => "Gothic",
+            Self::Matcha => "Matcha",
+            Self::Stone => "Stone",
+            Self::Y2k => "Y2K",
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Settings {
     pub output: PathBuf,
     pub layout: crate::output::Layout,
     pub auto_tag: bool,
     pub theme: Theme,
+    pub theme_preset: ThemePreset,
     /// Extension id to use per service key, when several are installed.
     pub preferred: BTreeMap<String, String>,
     /// Last choice per "<extension id>/<option key>".
@@ -126,7 +169,7 @@ impl Default for Settings {
     fn default() -> Self {
         Settings {
             output: default_output(), layout: crate::output::Layout::default(), auto_tag: false, theme: Theme::System,
-            preferred: BTreeMap::new(), options: BTreeMap::new(),
+            theme_preset: ThemePreset::default(), preferred: BTreeMap::new(), options: BTreeMap::new(),
         }
     }
 }
@@ -157,6 +200,7 @@ pub fn load_settings(paths: &Paths) -> Settings {
         layout: serde_json::from_value(json["layout"].clone()).unwrap_or_default(),
         auto_tag: json["auto_tag"].as_bool().unwrap_or_default(),
         theme: Theme::ALL.into_iter().find(|t| json["theme"].as_str() == Some(t.key())).unwrap_or_default(),
+        theme_preset: ThemePreset::ALL.into_iter().find(|t| json["theme_preset"].as_str() == Some(t.key())).unwrap_or_default(),
         preferred: map("preferred"),
         options: map("options"),
     }
@@ -169,6 +213,7 @@ pub fn save_settings(paths: &Paths, settings: &Settings) -> Result<(), String> {
         "layout": settings.layout,
         "auto_tag": settings.auto_tag,
         "theme": settings.theme.key(),
+        "theme_preset": settings.theme_preset.key(),
         "preferred": settings.preferred,
         "options": settings.options,
     });
@@ -194,7 +239,10 @@ pub struct Tools {
     pub browser: Option<String>,
 }
 
-pub const CAN_DOWNLOAD_FFMPEG: bool = cfg!(all(windows, target_arch = "x86_64"));
+pub const CAN_DOWNLOAD_FFMPEG: bool = cfg!(any(
+    all(windows, target_arch = "x86_64"),
+    all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64"))
+));
 
 const CLOAKBROWSER_EXECUTABLE: &str = if cfg!(windows) {
     "chrome.exe"

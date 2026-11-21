@@ -41,6 +41,23 @@ fn download_layout_and_automatic_tagging_default_for_old_settings_and_persist() 
     assert_eq!(load_settings(&paths), settings);
 }
 
+#[test]
+fn theme_presets_persist_independently_of_existing_color_modes() {
+    let (_guard, paths) = temp_root("theme");
+    for json in [r#"{"theme":"dark"}"#, r#"{"theme":"dark","theme_preset":"unknown"}"#] {
+        fs::write(paths.settings(), json).unwrap();
+        let settings = load_settings(&paths);
+        assert_eq!(settings.theme, Theme::Dark);
+        assert_eq!(settings.theme_preset, ThemePreset::Neutral);
+    }
+    let mut settings = load_settings(&paths);
+    for preset in ThemePreset::ALL {
+        settings.theme_preset = preset;
+        save_settings(&paths, &settings).unwrap();
+        assert_eq!(load_settings(&paths), settings);
+    }
+}
+
 /// A fresh Flacora data folder that cleans itself up on drop.
 fn temp_root(name: &str) -> (tempfile::TempDir, Paths) {
     let dir = tempfile::Builder::new().prefix(&format!("flacora-test-{name}-")).tempdir().unwrap();

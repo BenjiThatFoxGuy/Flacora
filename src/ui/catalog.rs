@@ -1,14 +1,14 @@
-use super::widgets::{self, card};
+use super::{theme::Kit, widgets::{self, card}};
 use crate::{app::{App, Page}, catalog::{Item, Kind, ResultPage}, icons, services};
 use rune::{Cursor, El, GrowthSpec, Icon, ScrollPos, SurfaceFit, Tx, col, el, icon, row, text};
-use rune_kit::{Button, ButtonVariant, ControlSize, Divider, IconButton, IconButtonVariant, Kit, Spinner, TextInput};
+use rune_kit::{Button, ButtonVariant, ControlSize, Divider, IconButton, IconButtonVariant, Spinner, TextInput};
 use std::{borrow::Cow, cell::Cell, collections::BTreeMap, rc::Rc};
 
 fn provider_display_name(name: &str) -> &str {
     name.strip_suffix(" Web").unwrap_or(name)
 }
 
-pub fn page(s: &App, k: &Kit) -> El {
+pub fn page(s: &App, k: &'static Kit) -> El {
     let head = widgets::page_header(k, "Catalog", "Browse music services and choose tracks to send to Downloads.", Vec::new());
     let providers: Vec<_> = s.catalog_providers().collect();
     let body = if providers.is_empty() {
@@ -104,7 +104,7 @@ pub fn page(s: &App, k: &Kit) -> El {
     widgets::page("catalog-page").child(head).child(body)
 }
 
-fn results(s: &App, k: &Kit, result: &ResultPage) -> El {
+fn results(s: &App, k: &'static Kit, result: &ResultPage) -> El {
     let tracks = result.items.iter().any(|item| item.kind == Kind::Track);
     let all_selected = tracks && result.items.iter().filter(|item| item.kind == Kind::Track).all(|item| s.catalog.selected.contains(&item.url));
     let mut header = row().gap(10.0).w_full().center_y().flex_wrap();
@@ -144,11 +144,10 @@ fn results(s: &App, k: &Kit, result: &ResultPage) -> El {
     content.child(widgets::page_scroll(k, col().key(key).child(list)))
 }
 
-fn result_rows(_s: &App, k: &Kit, result: &ResultPage) -> El {
+fn result_rows(_s: &App, k: &'static Kit, result: &ResultPage) -> El {
     if result.items.is_empty() {
         return col().w_full().child(text("No items found.").font(k.ty.body).color(k.c.text_muted).py(16.0));
     }
-    let dark = k.dark;
     let count = result.items.len();
     col().key("catalog-rows").w_full().growth(GrowthSpec::default()).virtual_rows(
         count,
@@ -162,7 +161,6 @@ fn result_rows(_s: &App, k: &Kit, result: &ResultPage) -> El {
                 .unwrap_or_else(|| Cow::Owned(format!("catalog-row-{i}")))
         },
         move |s: &App, i| {
-            let k = super::theme::kit(dark);
             let Some(item) = s.catalog.result.as_ref().and_then(|page| page.items.get(i)) else {
                 return el();
             };

@@ -56,6 +56,7 @@ function New-FlacoraAppImage([string] $Binary, [string] $Destination, [string] $
     }
 }
 
+$build = Get-ReleaseTarget $root $BuildRoot
 Push-Location $root
 try {
     $metadata = cargo metadata --locked --no-deps --format-version 1 | ConvertFrom-Json
@@ -65,8 +66,6 @@ try {
 }
 $version = ($metadata.packages | Where-Object { $_.name -eq 'flacora' } | Select-Object -First 1).version
 if (-not $version) { throw "Could not determine flacora version from Cargo metadata" }
-$build = Get-ReleaseTarget $root
-$build.Directory = Join-Path $BuildRoot 'target/release-build'
 $exe = "flacora$($build.ExeSuffix)"
 Invoke-ReleaseBuild $BuildRoot $root $build
 

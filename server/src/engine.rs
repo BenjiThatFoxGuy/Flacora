@@ -5,7 +5,7 @@
 //! layer sends [`Command`]s here and receives a [`State`] snapshot after every
 //! change.
 
-use flacora::app::{App, Notification, NotificationKind};
+use flacora::app::{App, NotificationKind};
 use flacora::extensions;
 use flacora::jobs::{Choice as JobChoice, Job, Status};
 use flacora::library::Entry;

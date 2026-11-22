@@ -24,7 +24,7 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
 
 WORKDIR /build
 COPY . .
-RUN cargo build --release --bin flacora-server
+RUN cargo build --release -p flacora-server
 
 # Runtime stage.
 FROM ubuntu:22.04 AS runtime

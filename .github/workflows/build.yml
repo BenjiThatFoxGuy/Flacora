@@ -22,6 +22,7 @@ jobs:
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           toolchain: "1.99.1"
+          rustflags: ""
           cache: true
       - name: Install Linux build dependencies
         run: |
@@ -31,7 +32,7 @@ jobs:
       - name: Compile the workspace and tests
         run: cargo test --workspace --no-run
       - name: Build the server binary
-        run: cargo build --release --bin flacora-server
+        run: cargo build --release -p flacora-server
       - uses: actions/upload-artifact@v4
         with:
           name: cargo-lock

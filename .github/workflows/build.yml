@@ -33,6 +33,24 @@ jobs:
         run: cargo test --workspace --no-run
       - name: Build the server binary
         run: cargo build --release -p flacora-server
+      - name: Smoke-test the headless server
+        env:
+          FLACORA_HOME: /tmp/flacora-smoke
+          FLACORA_OUTPUT: /tmp/flacora-smoke/music
+          FLACORA_PORT: "8080"
+        run: |
+          ./target/release/flacora-server > /tmp/flacora-server.log 2>&1 &
+          pid=$!
+          for _ in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8080/api/version; then break; fi
+            sleep 0.5
+          done
+          echo
+          curl -fsS http://127.0.0.1:8080/api/state | head -c 400
+          echo
+          kill "$pid" 2>/dev/null || true
+          wait "$pid" 2>/dev/null || true
+          cat /tmp/flacora-server.log
       - uses: actions/upload-artifact@v4
         with:
           name: cargo-lock

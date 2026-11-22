@@ -18,7 +18,10 @@ RUN add-pkg ca-certificates dbus-bin ffmpeg fonts-dejavu-core fonts-liberation \
     libegl1 libnspr4 libnss3 libvulkan1 mesa-vulkan-drivers libudev1 \
     libwayland-client0 libx11-xcb1 libxcb-xfixes0 libxcomposite1 libxdamage1 \
     libxrandr2 libxkbcommon0 libxkbcommon-x11-0 xdg-desktop-portal-gtk \
-    && set-cont-env APP_NAME Flacora
+    && set-cont-env APP_NAME Flacora \
+    && set-cont-env WGPU_BACKEND gl \
+    && set-cont-env LIBGL_ALWAYS_SOFTWARE 1 \
+    && set-cont-env RUNE_GPU_LOG 1
 
 COPY --from=upstream /tmp/flacora/squashfs-root/ /opt/flacora/
 COPY --chmod=755 docker/startapp.sh /startapp.sh

@@ -57,7 +57,7 @@ pub fn router(shared: Arc<Shared>) -> Router {
         .with_state(shared)
 }
 
-async fn serve(host: String, port: u16, shared: Arc<Shared>) {
+pub async fn serve(host: String, port: u16, shared: Arc<Shared>) {
     let listener = match tokio::net::TcpListener::bind((host.as_str(), port)).await {
         Ok(listener) => listener,
         Err(error) => {

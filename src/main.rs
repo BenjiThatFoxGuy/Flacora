@@ -88,7 +88,7 @@ fn main() {
             ("drop", fixtures::dropping),
             ("loading", fixtures::loading),
         ],
-        ..AppSpec::new("Flacora", MIN_WINDOW_SIZE, App::default, ui::view)
+        ..AppSpec::new("Flacora", gui::MIN_WINDOW_SIZE, App::default, ui::view)
     });
     let app_handle = app.handle();
     let ready_handle = app.handle();

@@ -26,3 +26,6 @@ pub mod window;
 
 // Window-level items the UI tests and the engine reach as `crate::` paths.
 pub use gui::{LOGO, MIN_WINDOW_SIZE, on_key, poll};
+
+// Rune types the headless engine needs without linking rune directly.
+pub use rune::{Tx, Waker};

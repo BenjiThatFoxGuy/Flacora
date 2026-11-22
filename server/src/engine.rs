@@ -6,6 +6,7 @@
 //! change.
 
 use flacora::app::{App, NotificationKind};
+use flacora::{Tx, Waker};
 use flacora::extensions;
 use flacora::jobs::{Choice as JobChoice, Job, Status};
 use flacora::library::Entry;
@@ -235,7 +236,7 @@ pub struct ServiceDto {
 
 pub fn run(cmd_rx: Receiver<Command>, state_tx: Sender<State>) {
     let wake = Arc::new(AtomicBool::new(false));
-    let waker: rune::Waker = Arc::new(move || {
+    let waker: Waker = Arc::new(move || {
         wake.store(true, Ordering::SeqCst);
     });
 
@@ -244,7 +245,7 @@ pub fn run(cmd_rx: Receiver<Command>, state_tx: Sender<State>) {
         app.settings.output = PathBuf::from(output);
     }
     app.connect(waker);
-    let mut tx = rune::Tx::default();
+    let mut tx = Tx::default();
     let mut clock = 0.0f64;
     let mut last = Instant::now();
 

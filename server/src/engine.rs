@@ -588,13 +588,11 @@ fn entry_dto(entry: &Entry) -> EntryDto {
 
 fn notices_dto(app: &App) -> Vec<NoticeDto> {
     let mut notices = Vec::new();
-    for (notification, kind) in [
-        (&app.notice, NotificationKind::Success),
-        (&app.info, NotificationKind::Warning),
-    ] {
-        if let Some(notification) = notification {
-            notices.push(NoticeDto { kind: notice_kind(kind).to_string(), message: notification.message.clone() });
-        }
+    for notification in [&app.notice, &app.info].into_iter().flatten() {
+        notices.push(NoticeDto {
+            kind: notice_kind(notification.kind).to_string(),
+            message: notification.message.clone(),
+        });
     }
     notices
 }

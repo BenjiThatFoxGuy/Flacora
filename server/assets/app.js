@@ -4,6 +4,7 @@ let state = null;
 let page = 'downloads';
 const ui = {
   urls: '',
+  enqueueError: '',
   extension: 'auto',
   openLogs: new Set(),
   filePath: '',
@@ -151,6 +152,7 @@ function renderDownloads() {
         <h2>Add download</h2>
         <label>Paste one or more links</label>
         <textarea id="urls" placeholder="https://tidal.com/track/...">${esc(ui.urls)}</textarea>
+        <p id="enqueue-error" role="alert" style="color:var(--bad)" ${ui.enqueueError ? '' : 'hidden'}>${esc(ui.enqueueError)}</p>
         ${candidates.length ? `<label>Downloader</label>
         <select id="extension">
           <option value="auto" ${ui.extension === 'auto' ? 'selected' : ''}>Automatic</option>
@@ -208,9 +210,20 @@ async function enqueue() {
       if (index >= 0) options.push({ extension: selected.id, option: select.dataset.option, index });
     }
   }
-  await post('/api/enqueue', { urls, options });
-  ui.urls = '';
-  refresh();
+  const draft = ui.urls;
+  try {
+    await post('/api/enqueue', { urls, options });
+    if (ui.urls === draft) ui.urls = '';
+    ui.enqueueError = '';
+    refresh();
+  } catch (error) {
+    ui.enqueueError = error.message;
+    const alert = document.getElementById('enqueue-error');
+    if (alert) {
+      alert.textContent = ui.enqueueError;
+      alert.hidden = false;
+    }
+  }
 }
 
 // -------------------------------------------------------------------- library

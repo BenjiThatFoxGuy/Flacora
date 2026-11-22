@@ -5,7 +5,7 @@ use std::{
     fs, io,
     path::{Path, PathBuf},
 };
-use tempfile::{NamedTempFile, TempDir};
+use tempfile::TempDir;
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(default)]
@@ -201,7 +201,9 @@ impl Layout {
                     available_stem(&directory, &component(&original, "File"), &[source], false)?
                 };
                 let path = target_path(&directory, &stem, source);
-                copy_file(source, &path)?;
+                copy_file(source, &path).map_err(|error| {
+                    io::Error::new(error.kind(), format!("{}: {error}", path.display()))
+                })?;
                 published.push(path);
             }
             Ok(())
@@ -331,17 +333,19 @@ fn available_stem(
 }
 
 fn copy_file(source: &Path, target: &Path) -> io::Result<()> {
+    // A hard link is instant, but plenty of filesystems refuse links with EPERM
+    // (rclone/FUSE mounts, 9p, some NAS targets). Fall back to writing the
+    // destination directly: create + write works everywhere, where the
+    // link-then-rename dance `tempfile` uses does not.
     match fs::hard_link(source, target) {
         Ok(()) => return Ok(()),
         Err(error) if error.kind() == io::ErrorKind::AlreadyExists => return Err(error),
         Err(_) => {}
     }
     let mut input = fs::File::open(source)?;
-    let mut temp = NamedTempFile::new_in(target.parent().expect("target is in the output folder"))?;
-    io::copy(&mut input, &mut temp)?;
-    temp.persist_noclobber(target)
-        .map(|_| ())
-        .map_err(|error| error.error)
+    let mut output = fs::File::create(target)?;
+    io::copy(&mut input, &mut output)?;
+    Ok(())
 }
 
 #[cfg(test)]

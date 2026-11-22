@@ -19,10 +19,9 @@
 
 ---
 
-## Docker / web UI
+## Docker / browser desktop
 
-This fork also ships a headless build: the same download engine with a browser
-UI, for a server with no display. See [DOCKER.md](DOCKER.md).
+This fork packages the upstream Linux AppImage with a browser-accessible virtual desktop and optional VNC. See [DOCKER.md](DOCKER.md).
 
 ```sh
 docker compose up -d

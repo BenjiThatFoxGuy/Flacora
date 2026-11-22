@@ -48,6 +48,7 @@ CATALOG_MANIFEST = {
     "hosts": [SERVICE],
     "catalog": True,
     "executable": {"linux-x64": "cat.sh"},
+    "args": [],
 }
 
 # Mirrors what a real downloader prints so Flacora records the file as saved.

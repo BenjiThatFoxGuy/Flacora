@@ -7,12 +7,12 @@ set -eu
 # cargo fetch stores bare repos in git/db; checkouts appear only during build.
 # Search both locations, plus the entire CARGO_HOME as a fallback.
 CARGO_HOME="${CARGO_HOME:-/usr/local/cargo}"
-CLIP=$(find "$CARGO_HOME" -path '*/rune/crates/rune/src/shaders/clip.wgsl' -print -quit 2>/dev/null || true)
+CLIP=$(find "$CARGO_HOME" -path '*/rune*/crates/rune/src/*clip.wgsl' -print -quit 2>/dev/null || true)
 if [ -z "$CLIP" ]; then
     echo "clip.wgsl not in CARGO_HOME, trying to force checkout..."
     # A quick cargo check with an empty main forces git dep checkout.
     cargo check --release 2>/dev/null || true
-    CLIP=$(find "$CARGO_HOME" -path '*/rune/crates/rune/src/shaders/clip.wgsl' -print -quit 2>/dev/null || true)
+    CLIP=$(find "$CARGO_HOME" -path '*/rune*/crates/rune/src/*clip.wgsl' -print -quit 2>/dev/null || true)
 fi
 if [ -z "$CLIP" ]; then
     echo "ERROR: clip.wgsl not found anywhere under $CARGO_HOME" >&2

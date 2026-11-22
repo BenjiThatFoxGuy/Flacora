@@ -10,6 +10,8 @@ const ui = {
   filePaths: {},
   lookup: {},
   uploading: false,
+  lastNotices: '',
+  toastTimer: null,
 };
 
 const main = document.getElementById('main');
@@ -442,7 +444,16 @@ function render() {
   if (!state.tools.browser) missing.push('browser');
   tools.innerHTML = `<span class="pill ${state.installed.length ? '' : 'missing'}">${state.installed.length} extension${state.installed.length === 1 ? '' : 's'}</span>`
     + (missing.length ? `<span class="pill missing">missing ${missing.join(', ')}</span>` : '');
-  toasts.innerHTML = state.notices.map((notice) => `<div class="toast ${esc(notice.kind)}">${esc(notice.message)}</div>`).join('');
+  const key = state.notices.map((notice) => `${notice.kind}:${notice.message}`).join('|');
+  if (key !== ui.lastNotices) {
+    ui.lastNotices = key;
+    toasts.innerHTML = state.notices.map((notice) => `<div class="toast ${esc(notice.kind)}">${esc(notice.message)}</div>`).join('');
+    clearTimeout(ui.toastTimer);
+    if (key) ui.toastTimer = setTimeout(() => { toasts.innerHTML = ''; }, 7000);
+  }
+
+  const editing = ['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName);
+  if (editing) return;
 
   if (page === 'downloads') renderDownloads();
   else if (page === 'library') renderLibrary();

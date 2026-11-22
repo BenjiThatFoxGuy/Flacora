@@ -54,6 +54,10 @@ jobs:
           done
           echo "$state" | head -c 500
           echo
+          curl -fsS http://127.0.0.1:8080/ | head -c 120
+          echo
+          curl -fsS http://127.0.0.1:8080/app.js | head -c 80
+          echo
           kill "$pid" 2>/dev/null || true
           wait "$pid" 2>/dev/null || true
           cat /tmp/flacora-server.log

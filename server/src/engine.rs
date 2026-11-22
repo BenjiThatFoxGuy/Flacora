@@ -241,16 +241,23 @@ pub fn run(cmd_rx: Receiver<Command>, state_tx: Sender<State>) {
     });
 
     let mut app = App::default();
-    if let Some(output) = std::env::var_os("FLACORA_OUTPUT").filter(|value| !value.is_empty()) {
-        app.settings.output = PathBuf::from(output);
-    }
     app.connect(waker);
+    let output_env = std::env::var_os("FLACORA_OUTPUT").filter(|value| !value.is_empty());
+    let mut applied_output = false;
     let mut tx = Tx::default();
     let mut clock = 0.0f64;
     let mut last = Instant::now();
 
     loop {
         let changed = app.drain_with(clock, &mut tx);
+        if !applied_output && app.loaded {
+            applied_output = true;
+            if let Some(output) = &output_env
+                && app.settings.output == flacora::store::default_output()
+            {
+                app.settings.output = PathBuf::from(output);
+            }
+        }
         let mut commanded = false;
         while let Ok(command) = cmd_rx.try_recv() {
             commanded |= handle(&mut app, command);

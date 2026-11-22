@@ -65,6 +65,14 @@ pub fn page(s: &App, k: &'static Kit) -> El {
             }
             body = body.child(status);
         }
+        if s.catalog.expanding() {
+            body = body.child(row().gap(8.0).center_y()
+                .child(Spinner::new().size(14.0).build(k))
+                .child(text(s.catalog.expansion_status().unwrap_or("Collecting tracks…").to_owned())
+                    .font(k.ty.small).color(k.c.text_muted))
+                .child(widgets::button(k, "catalog-cancel-expand", "Cancel", None, ButtonVariant::Ghost,
+                    |s: &mut App| s.catalog.cancel_expansion())));
+        }
         if let Some(error) = &s.catalog.error {
             let missing_extension = error == crate::catalog::MISSING_CATALOG_EXTENSION;
             let title = if missing_extension { "Catalog Extension Required" } else { "Catalog Request Failed" };
@@ -124,6 +132,10 @@ fn results(s: &App, k: &'static Kit, result: &ResultPage) -> El {
                     }
                 }
             }));
+    }
+    if s.catalog.can_expand() {
+        header = header.child(widgets::button(k, "catalog-expand", "Download All Tracks", Some(&icons::DISC),
+            ButtonVariant::Outline, |s: &mut App| s.expand_catalog_tracks()));
     }
     if !s.catalog.selected.is_empty() {
         header = header.child(widgets::button(k, "catalog-use", &format!("To Downloads ({})", s.catalog.selected.len()),

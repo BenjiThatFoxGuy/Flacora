@@ -89,6 +89,7 @@ pub enum Msg {
     Job(u64, JobEvent),
     JobStaging(u64, tempfile::TempDir),
     Catalog(u64, JobEvent),
+    CatalogExpand(u64, JobEvent),
     CatalogArtwork(String, Option<Vec<u8>>),
     DownloadPlaced(u64, Result<Vec<String>, String>),
     JobValidated(u64, Result<Vec<String>, String>),
@@ -431,6 +432,10 @@ impl App {
                 }
             }
             Msg::Catalog(id, event) => self.catalog.event(id, event),
+            Msg::CatalogExpand(id, event) => {
+                self.catalog.expand_event(id, event);
+                self.pump_expansion();
+            }
             Msg::CatalogArtwork(url, bytes) => self.catalog_artwork_loaded(url, bytes),
             Msg::DownloadPlaced(id, result) => self.download_placed(id, result),
             Msg::JobValidated(id, result) => self.job_validated(id, result),

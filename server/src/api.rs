@@ -51,6 +51,8 @@ pub fn router(shared: Arc<Shared>) -> Router {
         .route("/api/catalog/select", post(catalog_select))
         .route("/api/catalog/select-all", post(catalog_select_all))
         .route("/api/catalog/queue", post(catalog_queue))
+        .route("/api/catalog/expand", post(catalog_expand))
+        .route("/api/catalog/expand/cancel", post(catalog_cancel_expand))
         .route("/api/catalog/back", post(catalog_back))
         .route("/api/catalog/more", post(catalog_more))
         .route("/api/catalog/retry", post(catalog_retry))
@@ -372,6 +374,14 @@ async fn catalog_select_all(state: SharedState, Json(request): Json<CatalogSelec
 
 async fn catalog_queue(state: SharedState) -> Response {
     send(&state.cmd_tx, Command::CatalogQueue)
+}
+
+async fn catalog_expand(state: SharedState) -> Response {
+    send(&state.cmd_tx, Command::CatalogExpand)
+}
+
+async fn catalog_cancel_expand(state: SharedState) -> Response {
+    send(&state.cmd_tx, Command::CatalogCancelExpand)
 }
 
 async fn catalog_back(state: SharedState) -> Response {

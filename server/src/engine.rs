@@ -78,6 +78,8 @@ pub enum Command {
         selected: bool,
     },
     CatalogQueue,
+    CatalogExpand,
+    CatalogCancelExpand,
     CatalogBack,
     CatalogMore,
     CatalogRetry,
@@ -231,6 +233,9 @@ pub struct CatalogDto {
     pub can_retry: bool,
     pub showing_home: bool,
     pub home_feed_active: bool,
+    pub can_expand: bool,
+    pub expanding: bool,
+    pub expand_status: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Default)]
@@ -476,6 +481,14 @@ fn handle(app: &mut App, command: Command) -> bool {
             app.enqueue();
             true
         }
+        Command::CatalogExpand => {
+            app.expand_catalog_tracks();
+            true
+        }
+        Command::CatalogCancelExpand => {
+            app.catalog.cancel_expansion();
+            true
+        }
         Command::CatalogBack => {
             app.catalog.back();
             true
@@ -570,6 +583,9 @@ fn catalog_dto(app: &App) -> CatalogDto {
         can_retry: catalog.can_retry(),
         showing_home: catalog.showing_home(),
         home_feed_active: catalog.home_feed_active(),
+        can_expand: app.chosen_catalog_provider().is_some() && catalog.can_expand(),
+        expanding: catalog.expanding(),
+        expand_status: catalog.expansion_status().map(str::to_owned),
     }
 }
 

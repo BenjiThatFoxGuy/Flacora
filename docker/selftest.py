@@ -48,7 +48,7 @@ CATALOG_MANIFEST = {
     "hosts": [SERVICE],
     "catalog": True,
     "executable": {"linux-x64": "cat.sh"},
-    "args": [],
+    "args": ["{file}", "--url", "{url}"],
 }
 
 # Mirrors what a real downloader prints so Flacora records the file as saved.
@@ -76,10 +76,20 @@ echo "@flacora {\\"event\\":\\"saved\\",\\"path\\":\\"$target\\"}"
 CATALOG_SCRIPT = """#!/bin/sh
 case "$1" in
     --search) title="Search: $2" ;;
-    --browse) title="Album: $2" ;;
+    --browse) 
+        if echo "$2" | grep -q 'artist/'; then
+            # Artist page: return albums
+            echo "@flacora {"event":"catalog","page":{"title":"Artist: $2","note":"synthetic","items":[{"kind":"album","title":"Album 1","detail":"Synthetic","url":"https://example.test/album/1"},{"kind":"album","title":"Album 2","detail":"Synthetic","url":"https://example.test/album/2"}],"next":"cursor:album-page-1","artwork":null}}"
+        elif echo "$2" | grep -q 'album/'; then
+            # Album page: return tracks + next cursor to artist
+            echo "@flacora {"event":"catalog","page":{"title":"Album: $2","note":"synthetic","items":[{"kind":"track","title":"Track A","detail":"Synthetic","url":"https://example.test/track/1"},{"kind":"track","title":"Track B","detail":"Synthetic","url":"https://example.test/track/2"},{"kind":"track","title":"Track C","detail":"Synthetic","url":"https://example.test/track/3"}],"next":"cursor:artist-page","artwork":null}}"
+        else
+            title="Home"
+        fi
+        ;;
     *) title="Home" ;;
 esac
-echo "@flacora {\\"event\\":\\"catalog\\",\\"page\\":{\\"title\\":\\"$title\\",\\"note\\":\\"synthetic\\",\\"items\\":[\\"kind\\":\\"track\\",\\"title\\":\\"Track One\\",\\"detail\\":\\"Synthetic\\",\\"url\\":\\"https://example.test/track/1\\"},{\\"kind\\":\\"track\\",\\"title\\":\\"Track Two\\",\\"detail\\":\\"Synthetic\\",\\"url\\":\\"https://example.test/track/2\\"}]}}"
+echo "@flacora {"event":"catalog","page":{"title":"Home","note":"synthetic","items":[],"next":null,"artwork":null}}"
 """
 
 
@@ -128,6 +138,15 @@ def wait_for(description, check, timeout=90):
             last = error
         time.sleep(1)
     print(f"FAIL: {description} (last: {last})")
+    try:
+        state = get_json(f"{BASE['url']}/api/state")[1]
+        for notice in state.get("notices", []):
+            print(f"  notice: {notice.get('kind')}: {notice.get('message')}")
+        catalog = state.get("catalog") or {}
+        if catalog.get("error"):
+            print(f"  catalog error: {catalog['error']}")
+    except Exception as error:  # noqa: BLE001 - diagnostics only
+        print(f"  (could not read state: {error})")
     return None
 
 
@@ -260,6 +279,30 @@ def run(image):
 
         print("PASS: end-to-end container check")
         return True
+
+    # "All tracks" expansion test
+    before = len(get_json(state_url)[1]["jobs"])
+    # Submit catalog query that returns album items
+    post_json(f"{base}/api/catalog/submit", {{"input": "synthetic"}})
+    def catalog_listed():
+        catalog = get_json(state_url)[1]["catalog"]
+        # Check that we have album items (not just tracks)
+        return len(catalog.get("items", [])) >= 2 and True
+    if not wait_for("catalog lists album items", catalog_listed):
+        return False
+
+    # Trigger "Download All Tracks" expansion
+    post_json(f"{base}/api/catalog/expand", {{}})
+    def catalog_expanded():
+        state = get_json(state_url)[1]
+        catalog = state.get("catalog") or {{}}
+        jobs = state.get("jobs") or []
+        # After expansion, all tracks from albums should be queued
+        # We had 2 tracks from initial search, now should have more from expansion
+        return len(jobs) >= before + 6 and True  # 6 tracks from 2 albums
+    if not wait_for("all tracks queued from expansion", catalog_expanded):
+        return False
+
     finally:
         subprocess.run(["docker", "rm", "-f", name], capture_output=True, check=False)
         shutil.rmtree(root, ignore_errors=True)

@@ -13,6 +13,7 @@ const ARTWORK_CACHE: usize = 192;
 const ARTWORK_BYTES: u64 = 2 << 20;
 const MAX_TRAIL: usize = 20;
 const MAX_CATALOG_ITEMS: usize = 1000;
+const MAX_EXPANSION_STEPS: usize = 200;
 const MAX_FEED_SECTIONS: usize = 32;
 const CATALOG_TIMEOUT: Duration = Duration::from_secs(45);
 static ARTWORK_CLIENT: LazyLock<Option<Client>> = LazyLock::new(|| {
@@ -185,6 +186,19 @@ struct Pending {
     error: Option<String>,
 }
 
+/// The queued drill-in work behind "all tracks": every collection item reached from the
+/// current page, its `next` cursors, and the tracks collected so far.
+#[derive(Default)]
+struct Expansion {
+    queue: VecDeque<(Request, Option<String>)>,
+    seen: BTreeSet<String>,
+    tracks: Vec<String>,
+    active: Option<Pending>,
+    status: Option<String>,
+    error: Option<String>,
+    running: bool,
+}
+
 #[derive(Default)]
 pub struct Catalog {
     pub input: TextEdit,
@@ -198,6 +212,7 @@ pub struct Catalog {
     hidden_home: Option<(Option<Request>, ResultPage, BTreeSet<String>)>,
     pending: Option<Pending>,
     serial: u64,
+    expand: Expansion,
     artwork: BTreeMap<String, Option<Image>>,
     artwork_queue: VecDeque<String>,
     artwork_cached: VecDeque<String>,
@@ -208,6 +223,22 @@ fn valid_url(value: &str) -> Option<Url> {
     let url = Url::parse(value).ok()?;
     (url.scheme() == "https" && url.username().is_empty() && url.password().is_none() && url.port().is_none())
         .then_some(url)
+}
+
+/// Parses one `@flacora {"event":"catalog",...}` line into a page, or the extension's error text.
+fn parse_catalog_line(line: &str) -> Result<ResultPage, Option<String>> {
+    if let Some(json) = line.strip_prefix(protocol::PREFIX)
+        && let Ok(mut data) = serde_json::from_str::<serde_json::Value>(json)
+        && data["event"] == "catalog"
+        && let Ok(mut page) = serde_json::from_value::<ResultPage>(data["page"].take())
+    {
+        page.items.retain(|item| !item.title.trim().is_empty() && valid_url(&item.url).is_some());
+        page.items.truncate(250);
+        page.validate_sections();
+        Ok(page)
+    } else {
+        Err(protocol::error_line(line))
+    }
 }
 
 pub fn is_catalog_url(value: &str) -> bool {
@@ -249,6 +280,8 @@ pub fn is_catalog_url(value: &str) -> bool {
 impl Catalog {
     pub fn select_provider(&mut self, id: String) {
         self.cancel();
+        self.cancel_expansion();
+        self.expand = Expansion::default();
         self.clear_artwork_queue();
         self.provider = Some(id);
         self.result = None;
@@ -301,8 +334,105 @@ impl Catalog {
         }
     }
 
+    /// True when the current page has collection items the user can expand into tracks.
+    pub fn can_expand(&self) -> bool {
+        !self.busy() && !self.expanding() && self.result.as_ref().is_some_and(|page| {
+            page.items.iter().any(|item| item.kind != Kind::Track)
+        })
+    }
+
+    pub fn expanding(&self) -> bool {
+        self.expand.running
+    }
+
+    pub fn expansion_status(&self) -> Option<&str> {
+        self.expand.status.as_deref()
+    }
+
+    /// Stops the "all tracks" walk and drops everything it collected.
+    pub fn cancel_expansion(&mut self) {
+        if let Some(active) = self.expand.active.take() {
+            active.process.0.cancel();
+        }
+        self.expand.queue.clear();
+        self.expand.running = false;
+        self.expand.status = Some("Cancelled.".into());
+    }
+
+    /// Queues every collection item on the current page for the "all tracks" walk.
+    pub fn begin_expansion(&mut self, provider: String) {
+        let mut expand = Expansion::default();
+        expand.running = true;
+        expand.status = Some("Collecting tracks…".into());
+        if let Some(page) = &self.result {
+            for item in &page.items {
+                if item.kind == Kind::Track {
+                    if expand.seen.insert(item.url.clone()) {
+                        expand.tracks.push(item.url.clone());
+                    }
+                } else if expand.seen.insert(item.url.clone()) {
+                    expand.queue.push_back((
+                        Request { provider: provider.clone(), query: Query::Open(item.url.clone()) },
+                        None,
+                    ));
+                }
+            }
+        }
+        self.expand = expand;
+    }
+
+    pub fn expand_event(&mut self, id: u64, event: JobEvent) {
+        let Some(active) = self.expand.active.as_mut().filter(|pending| pending.id == id) else { return };
+        match event {
+            JobEvent::Line(line) => match parse_catalog_line(&line) {
+                Ok(page) => active.result = Some(page),
+                Err(Some(error)) => active.error = Some(error),
+                Err(None) => {}
+            },
+            JobEvent::Exit(exit) => {
+                let active = self.expand.active.take().expect("checked above");
+                match (&exit, active.result) {
+                    (Ok(0), Some(page)) => self.absorb_expansion_page(&active.request, page),
+                    _ => {
+                        let error = active
+                            .error
+                            .or_else(|| exit.err())
+                            .unwrap_or_else(|| "The catalog request returned no results.".into());
+                        self.expand.error = Some(error);
+                    }
+                }
+                self.expand.status = Some(format!("Collecting tracks… found {}", self.expand.tracks.len()));
+            }
+        }
+    }
+
+    /// Keeps the tracks from one drilled page and queues its collection items and `next` cursor.
+    fn absorb_expansion_page(&mut self, request: &Request, page: ResultPage) {
+        for item in page.items {
+            if item.kind == Kind::Track {
+                if self.expand.tracks.len() < MAX_CATALOG_ITEMS && self.expand.seen.insert(item.url.clone()) {
+                    self.expand.tracks.push(item.url);
+                }
+            } else if self.expand.seen.insert(item.url.clone())
+                && self.expand.queue.len() < MAX_EXPANSION_STEPS
+            {
+                self.expand.queue.push_back((
+                    Request { provider: request.provider.clone(), query: Query::Open(item.url) },
+                    None,
+                ));
+            }
+        }
+        if let Some(next) = page.next
+            && self.expand.queue.len() < MAX_EXPANSION_STEPS
+        {
+            self.expand.queue.push_front((request.clone(), Some(next)));
+        }
+    }
+
     pub fn back(&mut self) {
         self.cancel();
+        self.cancel_expansion();
+        self.expand = Expansion::default();
         self.clear_artwork_queue();
         if let Some((request, result, selected)) = self.trail.pop() {
             self.provider = Some(request.provider.clone());
@@ -326,20 +456,11 @@ impl Catalog {
     pub fn event(&mut self, id: u64, event: JobEvent) {
         let Some(pending) = self.pending.as_mut().filter(|p| p.id == id) else { return };
         match event {
-            JobEvent::Line(line) => {
-                if let Some(json) = line.strip_prefix(protocol::PREFIX)
-                    && let Ok(mut data) = serde_json::from_str::<serde_json::Value>(json)
-                    && data["event"] == "catalog"
-                    && let Ok(mut page) = serde_json::from_value::<ResultPage>(data["page"].take())
-                {
-                    page.items.retain(|item| !item.title.trim().is_empty() && valid_url(&item.url).is_some());
-                    page.items.truncate(250);
-                    page.validate_sections();
-                    pending.result = Some(page);
-                } else if let Some(error) = protocol::error_line(&line) {
-                    pending.error = Some(error);
-                }
-            }
+            JobEvent::Line(line) => match parse_catalog_line(&line) {
+                Ok(page) => pending.result = Some(page),
+                Err(Some(error)) => pending.error = Some(error),
+                Err(None) => {}
+            },
             JobEvent::Exit(exit) => {
                 let pending = self.pending.take().unwrap();
                 if let (Ok(0), Some(next)) = (&exit, pending.result) {
@@ -442,6 +563,8 @@ impl App {
     pub fn toggle_catalog_home(&mut self) {
         if self.catalog.home_feed_active() {
             self.catalog.cancel();
+            self.catalog.cancel_expansion();
+            self.catalog.expand = Expansion::default();
             self.catalog.clear_artwork_queue();
             let request = self.catalog.request.take();
             let selected = std::mem::take(&mut self.catalog.selected);
@@ -483,17 +606,10 @@ impl App {
         if self.wait_for_import() {
             return;
         }
-        let Some(installed) = self.catalog_providers().find(|p| p.manifest.id == request.provider).cloned() else {
-            self.catalog.error = Some("The catalog extension is unavailable.".into());
-            return;
-        };
-        let Some(program) = installed.executable() else {
-            self.catalog.error = Some("The catalog extension has no build for this computer.".into());
-            return;
-        };
         self.catalog.cancel();
+        self.catalog.cancel_expansion();
+        self.catalog.expand = Expansion::default();
         self.catalog.error = None;
-        self.catalog.provider = Some(request.provider.clone());
         let append = cursor.is_some();
         if !append {
             self.catalog.clear_artwork_queue();
@@ -501,14 +617,29 @@ impl App {
             self.catalog.hidden_home = None;
             self.catalog.selected.clear();
         }
-        let Some(link) = &self.link else { return };
+        self.spawn_catalog_request(request, cursor, false);
+    }
+
+    /// Starts one catalog subprocess for either the visible page or the "all tracks" walk.
+    fn spawn_catalog_request(&mut self, request: Request, cursor: Option<String>, expansion: bool) -> Option<u64> {
+        let Some(installed) = self.catalog_providers().find(|p| p.manifest.id == request.provider).cloned() else {
+            self.catalog.error = Some("The catalog extension is unavailable.".into());
+            return None;
+        };
+        let Some(program) = installed.executable() else {
+            self.catalog.error = Some("The catalog extension has no build for this computer.".into());
+            return None;
+        };
+        self.catalog.error = None;
+        self.catalog.provider = Some(request.provider.clone());
+        let Some(link) = &self.link else { return None };
         let mut args = match &request.query {
             Query::Open(url) => vec!["--browse".into(), url.clone()],
             Query::Search(query) => vec!["--search".into(), query.clone()],
             Query::Home => vec!["--home".into()],
         };
-        if let Some(cursor) = cursor {
-            args.extend(["--cursor".into(), cursor]);
+        if let Some(cursor) = cursor.as_deref() {
+            args.extend(["--cursor".into(), cursor.to_owned()]);
         }
         let cwd = self.paths.data(&request.provider);
         let browser = self.paths.browser();
@@ -518,14 +649,19 @@ impl App {
         let id = self.catalog.serial;
         let send = link.sender();
         let process = JobHandle::detached();
-        self.catalog.pending = Some(Pending {
+        let pending = Pending {
             id,
             request,
-            append,
+            append: cursor.is_some(),
             process: OwnedProcess(process.clone()),
             result: None,
             error: None,
-        });
+        };
+        if expansion {
+            self.catalog.expand.active = Some(pending);
+        } else {
+            self.catalog.pending = Some(pending);
+        }
         let spec = runner::Spec { program, args, env, cwd };
         std::thread::spawn(move || {
             let timed = process.clone();
@@ -535,7 +671,11 @@ impl App {
                 if matches!(event, JobEvent::Exit(_)) {
                     let _ = done_tx.send(());
                 }
-                send(Msg::Catalog(id, event));
+                if expansion {
+                    send(Msg::CatalogExpand(id, event));
+                } else {
+                    send(Msg::Catalog(id, event));
+                }
             });
             if let Err(error) = runner::spawn_into(process, spec, event_send.clone()) {
                 event_send(JobEvent::Exit(Err(error)));
@@ -543,9 +683,15 @@ impl App {
             }
             if done_rx.recv_timeout(CATALOG_TIMEOUT).is_err() && !timed.is_cancelled() {
                 timed.cancel();
-                timeout_send(Msg::Catalog(id, JobEvent::Line("Error: The catalog request timed out.".into())));
+                let event = JobEvent::Line("Error: The catalog request timed out.".into());
+                if expansion {
+                    timeout_send(Msg::CatalogExpand(id, event));
+                } else {
+                    timeout_send(Msg::Catalog(id, event));
+                }
             }
         });
+        Some(id)
     }
 
     pub fn retry_catalog(&mut self) {
@@ -574,6 +720,75 @@ impl App {
             self.catalog.selected.clear();
             self.page = Page::Downloads;
         }
+    }
+
+    /// Walks every collection item on the current catalog page and queues all tracks found.
+    pub fn expand_catalog_tracks(&mut self) {
+        if self.wait_for_import() || self.catalog.busy() || self.catalog.expanding() {
+            return;
+        }
+        let Some(result) = self.catalog.result.clone() else { return };
+        if !result.items.iter().any(|item| item.kind != Kind::Track) {
+            self.catalog.error = Some("This page has no albums, playlists or artists to expand.".into());
+            return;
+        }
+        let Some(provider) = self
+            .catalog
+            .provider
+            .clone()
+            .or_else(|| self.chosen_catalog_provider().map(|provider| provider.manifest.id.clone()))
+        else {
+            self.catalog.error = Some("Choose a catalog extension first.".into());
+            return;
+        };
+        self.catalog.error = None;
+        self.catalog.begin_expansion(provider);
+        self.pump_expansion();
+    }
+
+    /// Runs the next queued drill-in request, or finishes the walk when the queue is empty.
+    pub(crate) fn pump_expansion(&mut self) {
+        if !self.catalog.expanding() || self.catalog.expand.active.is_some() {
+            return;
+        }
+        let Some((request, cursor)) = self.catalog.expand.queue.pop_front() else {
+            self.finish_expansion();
+            return;
+        };
+        if self.spawn_catalog_request(request, cursor, true).is_none() {
+            self.catalog.expand.running = false;
+        }
+    }
+
+    fn finish_expansion(&mut self) {
+        let tracks = std::mem::take(&mut self.catalog.expand.tracks);
+        self.catalog.expand.running = false;
+        if tracks.is_empty() {
+            let message = self
+                .catalog
+                .expand
+                .error
+                .clone()
+                .unwrap_or_else(|| "No tracks were found in those items.".into());
+            self.catalog.expand.status = Some(message.clone());
+            self.catalog.error = Some(message);
+            return;
+        }
+        let existing: BTreeSet<String> = self.url.text.split_whitespace().map(str::to_owned).collect();
+        let fresh: Vec<String> = tracks.into_iter().filter(|url| !existing.contains(url)).collect();
+        if fresh.is_empty() {
+            self.catalog.expand.status = Some("Those tracks are already in the download box.".into());
+            return;
+        }
+        self.batch_destination = None;
+        let draft = self.url.text.trim();
+        let selected = fresh.join(" ");
+        self.url = TextEdit::new(&if draft.is_empty() { selected } else { format!("{draft} {selected}") });
+        self.catalog.selected.clear();
+        self.catalog.expand.status = Some(format!("Queued {} tracks.", fresh.len()));
+        self.success(format!("Queued {} tracks from the catalog.", fresh.len()));
+        self.page = Page::Downloads;
+        self.enqueue();
     }
 
     pub fn request_catalog_artwork(&mut self, url: &str) {

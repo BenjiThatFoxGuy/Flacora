@@ -8,15 +8,23 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /build
-COPY . .
 
-# Fetch all git dependencies first so we can patch the shader.
+# 1) Copy only dependency manifests first so cargo fetch is cached when only
+#    source files change. The git rev pins in Cargo.toml make this stable.
+COPY Cargo.toml Cargo.lock ./
+COPY server/Cargo.toml server/Cargo.toml
+# Dummy src so cargo fetch can resolve the workspace without the real code.
+RUN mkdir -p src server/src && echo 'fn main(){}' > src/main.rs && echo '' > src/lib.rs && echo 'fn main(){}' > server/src/main.rs
 RUN cargo fetch
 
-# Replace unpack2x16float (needs SHADER_FLOAT16_IN_FLOAT32, which llvmpipe
-# lacks) with a manual f16→f32 polyfill that works on any backend.
+# 2) Patch the shader while deps are cached.
+COPY docker/patch-shader.sh docker/patch-shader.sh
 RUN sh docker/patch-shader.sh
 
+# 3) Now copy the real source and build. Only this layer busts on code changes.
+COPY . .
+# Touch the crate roots so cargo doesn't skip them (dummy files are older).
+RUN touch src/main.rs src/lib.rs server/src/main.rs
 RUN RUSTFLAGS="" cargo build --release --bin flacora
 
 # ── Stage 2: runtime on jlesage/baseimage-gui ───────────────────────────────

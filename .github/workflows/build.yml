@@ -14,25 +14,49 @@ concurrency:
   group: build-image-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  SCCACHE_GHA_ENABLED: "true"
+  RUSTC_WRAPPER: sccache
+
 jobs:
   test:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
+
+      - uses: mozilla-actions/sccache-action@v0.0.9
+
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           toolchain: "1.99.1"
           rustflags: ""
           cache: true
+          cache-workspaces: ". -> target"
+
+      - name: Cache cargo registry + git deps
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+          key: cargo-deps-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: cargo-deps-
+
       - name: Install Linux build dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             libdbus-1-dev libudev-dev libwayland-dev libxkbcommon-dev pkg-config
+
       - name: Compile the workspace and tests
         run: cargo test --workspace --no-run
+
       - name: Build the server binary
         run: cargo build --release -p flacora-server
+
       - name: Smoke-test the headless server
         env:
           FLACORA_HOME: /tmp/flacora-smoke
@@ -61,6 +85,7 @@ jobs:
           kill "$pid" 2>/dev/null || true
           wait "$pid" 2>/dev/null || true
           cat /tmp/flacora-server.log
+
       - uses: actions/upload-artifact@v4
         with:
           name: cargo-lock

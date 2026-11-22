@@ -25,6 +25,9 @@ COPY --chmod=755 docker/startapp.sh /startapp.sh
 
 # Preserve the existing Compose port mapping. Native VNC uses 5900.
 ENV WEB_LISTENING_PORT=8080 \
+    DISPLAY_WIDTH=1280 \
+    DISPLAY_HEIGHT=768 \
+    KEEP_APP_RUNNING=1 \
     WEB_FILE_MANAGER=1 \
     WEB_FILE_MANAGER_ALLOWED_PATHS=/output
 EXPOSE 8080

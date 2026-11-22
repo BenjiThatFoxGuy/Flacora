@@ -9,25 +9,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /build
 
-# 1) Copy only dependency manifests first so cargo fetch is cached when only
-#    source files change. The git rev pins in Cargo.toml make this stable.
-COPY Cargo.toml Cargo.lock ./
-COPY server/Cargo.toml server/Cargo.toml
-# Dummy src so cargo fetch can resolve the workspace without the real code.
-RUN mkdir -p src server/src \
-    && echo 'fn main(){}' > src/main.rs \
-    && echo '' > src/lib.rs \
-    && echo 'fn main(){}' > server/src/main.rs
-RUN cargo fetch
-
-# 2) Copy the real source (busts cache only on code changes).
+# Copy everything, fetch, patch, build - no layer caching tricks.
 COPY . .
-RUN touch src/main.rs src/lib.rs server/src/main.rs
-
-# 3) Patch the shader after fetch so git checkouts exist, then build.
-#    Replace unpack2x16float (needs SHADER_FLOAT16_IN_FLOAT32, which llvmpipe
-#    lacks) with a manual f16→f32 polyfill that works on any backend.
+RUN cargo fetch
 RUN sh docker/patch-shader.sh
+
+# Nuke any cached rune artifacts so the patched shader is recompiled.
+RUN find target -path '*/rune-*' -name '*.d' -delete 2>/dev/null; \
+    find target -path '*/rune-*' -name '*.rlib' -delete 2>/dev/null; \
+    find target -path '*/rune-*' -name '*.rmeta' -delete 2>/dev/null; \
+    rm -rf target/release/.fingerprint/rune-* target/release/build/rune-* || true
+
 RUN RUSTFLAGS="" cargo build --release --bin flacora
 
 # ── Stage 2: runtime on jlesage/baseimage-gui ───────────────────────────────
@@ -45,7 +37,6 @@ RUN add-pkg ca-certificates dbus-bin ffmpeg fonts-dejavu-core fonts-liberation \
 COPY --from=builder /build/target/release/flacora /opt/flacora/flacora
 COPY --chmod=755 docker/startapp.sh /startapp.sh
 
-# Preserve the existing Compose port mapping. Native VNC uses 5900.
 ENV WEB_LISTENING_PORT=8080 \
     DISPLAY_WIDTH=1280 \
     DISPLAY_HEIGHT=768 \

@@ -210,7 +210,95 @@ async function enqueue() {
   }
   await post('/api/enqueue', { urls, options });
   ui.urls = '';
-  refresh();
+  await refresh();
+  // A pasted album / artist / playlist link opens the catalog instead of the queue.
+  const catalog = state.catalog ?? {};
+  if (catalog.busy || catalog.title || catalog.error) {
+    page = 'catalog';
+    for (const tab of tabs.querySelectorAll('button')) tab.classList.toggle('active', tab.dataset.page === 'catalog');
+    render();
+  }
+}
+
+// -------------------------------------------------------------------- catalog
+
+function renderCatalog() {
+  const catalog = state.catalog ?? {};
+  const items = catalog.items ?? [];
+  const tracks = items.filter((item) => item.kind === 'Track');
+  const selected = tracks.filter((item) => item.selected).length;
+  const providers = catalog.providers ?? [];
+  const list = items.map((item) => {
+    const isTrack = item.kind === 'Track';
+    const checkbox = isTrack
+      ? `<input type="checkbox" data-select="${esc(item.url)}" ${item.selected ? 'checked' : ''} style="width:auto">`
+      : '';
+    const open = isTrack
+      ? ''
+      : `<button class="icon-btn" data-open="${esc(item.url)}">Open</button>`;
+    return `<div class="item">
+      <div class="main grow">
+        <div class="name">${checkbox}${esc(item.title)}</div>
+        <div class="meta">${esc(item.kind)}${item.detail ? ` · ${esc(item.detail)}` : ''}</div>
+      </div>
+      ${open}
+    </div>`;
+  }).join('');
+
+  main.innerHTML = `
+    <div class="card">
+      <h2>Catalog</h2>
+      <form id="catalog-search" class="row">
+        <input type="text" id="catalog-input" class="grow" placeholder="Search, or paste an album / artist / playlist link" value="${esc(catalog.input ?? '')}">
+        <button class="button" type="submit">${catalog.busy ? 'Loading…' : 'Go'}</button>
+      </form>
+      ${providers.length > 1 ? `<label>Provider
+        <select id="catalog-provider">${providers.map((provider) => `<option value="${esc(provider.id)}" ${catalog.provider === provider.id ? 'selected' : ''}>${esc(provider.name)}</option>`).join('')}</select>
+      </label>` : ''}
+      <div class="row" style="margin-top:10px">
+        <button class="button ghost small" id="catalog-back" ${catalog.can_go_back ? '' : 'disabled'}>Back</button>
+        <button class="button ghost small" id="catalog-home">Home</button>
+        <button class="button ghost small" id="catalog-more" ${catalog.next ? '' : 'disabled'}>More</button>
+        <button class="button ghost small" id="catalog-retry" ${catalog.can_retry ? '' : 'disabled'}>Retry</button>
+        <span class="grow"></span>
+        <button class="button ghost small" id="catalog-all">Select all</button>
+        <button class="button ghost small" id="catalog-none">Select none</button>
+      </div>
+      ${catalog.error ? `<div class="sub" style="color:var(--bad);margin-top:10px">${esc(catalog.error)}</div>` : ''}
+      ${catalog.title ? `<h3 style="margin-top:12px">${esc(catalog.title)}</h3>` : ''}
+      ${catalog.note ? `<div class="muted">${esc(catalog.note)}</div>` : ''}
+      <div class="list" style="margin-top:10px">${list || '<div class="empty">Search for an artist, album or track, or paste a link.</div>'}</div>
+      <div class="row end" style="margin-top:12px">
+        <button class="button" id="catalog-queue" ${selected ? '' : 'disabled'}>Download selected (${selected})</button>
+      </div>
+    </div>`;
+
+  document.getElementById('catalog-search').addEventListener('submit', (event) => {
+    event.preventDefault();
+    post('/api/catalog/submit', { input: document.getElementById('catalog-input').value });
+  });
+  const provider = document.getElementById('catalog-provider');
+  if (provider) {
+    provider.addEventListener('change', () => post('/api/catalog/provider', { id: provider.value }));
+  }
+  document.getElementById('catalog-back').addEventListener('click', () => post('/api/catalog/back'));
+  document.getElementById('catalog-home').addEventListener('click', () => post('/api/catalog/home'));
+  document.getElementById('catalog-more').addEventListener('click', () => post('/api/catalog/more'));
+  document.getElementById('catalog-retry').addEventListener('click', () => post('/api/catalog/retry'));
+  document.getElementById('catalog-all').addEventListener('click', () => post('/api/catalog/select-all', { selected: true }));
+  document.getElementById('catalog-none').addEventListener('click', () => post('/api/catalog/select-all', { selected: false }));
+  document.getElementById('catalog-queue').addEventListener('click', () => {
+    post('/api/catalog/queue');
+    page = 'downloads';
+    for (const tab of tabs.querySelectorAll('button')) tab.classList.toggle('active', tab.dataset.page === 'downloads');
+    render();
+  });
+  main.querySelectorAll('[data-select]').forEach((box) => box.addEventListener('change', () => {
+    post('/api/catalog/select', { url: box.dataset.select, selected: box.checked });
+  }));
+  main.querySelectorAll('[data-open]').forEach((button) => button.addEventListener('click', () => {
+    post('/api/catalog/open', { input: button.dataset.open });
+  }));
 }
 
 // -------------------------------------------------------------------- library
@@ -452,10 +540,12 @@ function render() {
     if (key) ui.toastTimer = setTimeout(() => { toasts.innerHTML = ''; }, 7000);
   }
 
-  const editing = ['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName);
+  const editing = ['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName)
+    && !(document.activeElement?.tagName === 'INPUT' && document.activeElement?.type === 'checkbox');
   if (editing) return;
 
   if (page === 'downloads') renderDownloads();
+  else if (page === 'catalog') renderCatalog();
   else if (page === 'library') renderLibrary();
   else if (page === 'extensions') renderExtensions();
   else if (page === 'files') renderFiles();

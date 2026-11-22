@@ -46,6 +46,16 @@ pub fn router(shared: Arc<Shared>) -> Router {
         .route("/api/settings/auto-tag", post(set_auto_tag))
         .route("/api/settings/preferred", post(set_preferred))
         .route("/api/settings/pick", post(set_pick))
+        .route("/api/catalog/submit", post(catalog_submit))
+        .route("/api/catalog/open", post(catalog_open))
+        .route("/api/catalog/select", post(catalog_select))
+        .route("/api/catalog/select-all", post(catalog_select_all))
+        .route("/api/catalog/queue", post(catalog_queue))
+        .route("/api/catalog/back", post(catalog_back))
+        .route("/api/catalog/more", post(catalog_more))
+        .route("/api/catalog/retry", post(catalog_retry))
+        .route("/api/catalog/home", post(catalog_home))
+        .route("/api/catalog/provider", post(catalog_provider))
         .route("/api/files", get(list_files))
         .route("/api/files/download", get(download_file))
         .route("/api/version", get(version))
@@ -316,6 +326,72 @@ async fn set_pick(state: SharedState, Json(request): Json<PickRequest>) -> Respo
         &state.cmd_tx,
         Command::SetPick { extension: request.extension, option: request.option, index: request.index },
     )
+}
+
+// -------------------------------------------------------------------- catalog
+
+#[derive(Deserialize)]
+struct CatalogInputRequest {
+    #[serde(default)]
+    input: String,
+}
+
+#[derive(Deserialize)]
+struct CatalogSelectRequest {
+    url: String,
+    #[serde(default)]
+    selected: bool,
+}
+
+#[derive(Deserialize)]
+struct CatalogSelectAllRequest {
+    #[serde(default)]
+    selected: bool,
+}
+
+#[derive(Deserialize)]
+struct CatalogProviderRequest {
+    id: String,
+}
+
+async fn catalog_submit(state: SharedState, Json(request): Json<CatalogInputRequest>) -> Response {
+    send(&state.cmd_tx, Command::CatalogSubmit { input: request.input })
+}
+
+async fn catalog_open(state: SharedState, Json(request): Json<CatalogInputRequest>) -> Response {
+    send(&state.cmd_tx, Command::CatalogOpen { url: request.input })
+}
+
+async fn catalog_select(state: SharedState, Json(request): Json<CatalogSelectRequest>) -> Response {
+    send(&state.cmd_tx, Command::CatalogSelect { url: request.url, selected: request.selected })
+}
+
+async fn catalog_select_all(state: SharedState, Json(request): Json<CatalogSelectAllRequest>) -> Response {
+    send(&state.cmd_tx, Command::CatalogSelectAll { selected: request.selected })
+}
+
+async fn catalog_queue(state: SharedState) -> Response {
+    send(&state.cmd_tx, Command::CatalogQueue)
+}
+
+async fn catalog_back(state: SharedState) -> Response {
+    send(&state.cmd_tx, Command::CatalogBack)
+}
+
+async fn catalog_more(state: SharedState) -> Response {
+    send(&state.cmd_tx, Command::CatalogMore)
+}
+
+async fn catalog_retry(state: SharedState) -> Response {
+    send(&state.cmd_tx, Command::CatalogRetry)
+}
+
+async fn catalog_home(state: SharedState) -> Response {
+    send(&state.cmd_tx, Command::CatalogHome)
+}
+
+async fn catalog_provider(state: SharedState, Json(request): Json<CatalogProviderRequest>) -> Response {
+    send(&state.cmd_tx, Command::CatalogProvider { id: request.id })
 }
 
 // ---------------------------------------------------------------------- files

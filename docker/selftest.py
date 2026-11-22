@@ -24,6 +24,7 @@ import zipfile
 HOST = "127.0.0.1"
 SERVICE = "example.test"
 EXT_ID = "synthetic-dl"
+CATALOG_ID = "synthetic-catalog"
 
 MANIFEST = {
     "id": EXT_ID,
@@ -35,6 +36,18 @@ MANIFEST = {
     "hosts": [SERVICE],
     "executable": {"linux-x64": "dl.sh"},
     "args": ["{url}", "--output", "{output}"],
+}
+
+CATALOG_MANIFEST = {
+    "id": CATALOG_ID,
+    "name": "Synthetic Catalog",
+    "version": "1.0.0",
+    "kind": "metadata",
+    "description": "CI fixture that lists two tracks for any query.",
+    "services": ["Test"],
+    "hosts": [SERVICE],
+    "catalog": True,
+    "executable": {"linux-x64": "cat.sh"},
 }
 
 # Mirrors what a real downloader prints so Flacora records the file as saved.
@@ -58,6 +71,16 @@ echo "@flacora {\\"event\\":\\"stage\\",\\"text\\":\\"downloaded\\"}"
 echo "@flacora {\\"event\\":\\"saved\\",\\"path\\":\\"$target\\"}"
 """
 
+# A catalog provider answers --search/--browse with one catalog page.
+CATALOG_SCRIPT = """#!/bin/sh
+case "$1" in
+    --search) title="Search: $2" ;;
+    --browse) title="Album: $2" ;;
+    *) title="Home" ;;
+esac
+echo "@flacora {\\"event\\":\\"catalog\\",\\"page\\":{\\"title\\":\\"$title\\",\\"note\\":\\"synthetic\\",\\"items\\":[\\"kind\\":\\"track\\",\\"title\\":\\"Track One\\",\\"detail\\":\\"Synthetic\\",\\"url\\":\\"https://example.test/track/1\\"},{\\"kind\\":\\"track\\",\\"title\\":\\"Track Two\\",\\"detail\\":\\"Synthetic\\",\\"url\\":\\"https://example.test/track/2\\"}]}}"
+"""
+
 
 def free_port():
     with socket.socket() as sock:
@@ -65,13 +88,14 @@ def free_port():
         return sock.getsockname()[1]
 
 
-def build_package(path):
+def build_package(path, manifest, files):
     """A plain zip is accepted: unpack() falls back to zip when the FEXT magic is absent."""
     with zipfile.ZipFile(path, "w") as archive:
-        archive.writestr("extension.json", json.dumps(MANIFEST, indent=2))
-        info = zipfile.ZipInfo("dl.sh")
-        info.external_attr = 0o100755 << 16
-        archive.writestr(info, SCRIPT)
+        archive.writestr("extension.json", json.dumps(manifest, indent=2))
+        for name, body in files.items():
+            info = zipfile.ZipInfo(name)
+            info.external_attr = 0o100755 << 16
+            archive.writestr(info, body)
 
 
 def get_json(url, timeout=5):
@@ -152,7 +176,7 @@ def run(image):
         print("ok: web UI assets served")
 
         package = os.path.join(root, "synthetic.fext")
-        build_package(package)
+        build_package(package, MANIFEST, {"dl.sh": SCRIPT})
         subprocess.run(
             ["curl", "-fsS", "-F", f"file=@{package}", f"{base}/api/extensions/install"],
             check=True,
@@ -196,6 +220,41 @@ def run(image):
             lambda: len(get_json(state_url)[1]["jobs"]) >= 2 and True,
         )
         if not queued:
+            return False
+
+        # Catalog: a provider lists tracks, selecting them queues a download each.
+        catalog_package = os.path.join(root, "synthetic-catalog.fext")
+        build_package(catalog_package, CATALOG_MANIFEST, {"cat.sh": CATALOG_SCRIPT})
+        subprocess.run(
+            ["curl", "-fsS", "-F", f"file=@{catalog_package}", f"{base}/api/extensions/install"],
+            check=True,
+            capture_output=True,
+        )
+
+        def catalog_installed():
+            state = get_json(state_url)[1]
+            return any(item["id"] == CATALOG_ID for item in state["installed"]) and True
+
+        if not wait_for("catalog extension installs", catalog_installed):
+            return False
+
+        before = len(get_json(state_url)[1]["jobs"])
+        post_json(f"{base}/api/catalog/submit", {"input": "synthetic"})
+
+        def catalog_listed():
+            catalog = get_json(state_url)[1]["catalog"]
+            return len(catalog["items"]) == 2 and True
+
+        if not wait_for("catalog search lists tracks", catalog_listed):
+            return False
+
+        post_json(f"{base}/api/catalog/select-all", {"selected": True})
+        post_json(f"{base}/api/catalog/queue", {})
+
+        def catalog_queued():
+            return len(get_json(state_url)[1]["jobs"]) >= before + 2 and True
+
+        if not wait_for("catalog tracks queue for download", catalog_queued):
             return False
 
         print("PASS: end-to-end container check")

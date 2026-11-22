@@ -64,6 +64,27 @@ pub enum Command {
         option: String,
         index: usize,
     },
+    CatalogSubmit {
+        input: String,
+    },
+    CatalogOpen {
+        url: String,
+    },
+    CatalogSelect {
+        url: String,
+        selected: bool,
+    },
+    CatalogSelectAll {
+        selected: bool,
+    },
+    CatalogQueue,
+    CatalogBack,
+    CatalogMore,
+    CatalogRetry,
+    CatalogHome,
+    CatalogProvider {
+        id: String,
+    },
 }
 
 // ---------------------------------------------------------------- state DTOs
@@ -82,6 +103,7 @@ pub struct State {
     pub update: Option<UpdateDto>,
     pub notices: Vec<NoticeDto>,
     pub services: Vec<ServiceDto>,
+    pub catalog: CatalogDto,
 }
 
 impl Default for State {
@@ -102,6 +124,7 @@ impl Default for State {
                 .iter()
                 .map(|service| ServiceDto { key: service.key.to_string(), name: service.name.to_string() })
                 .collect(),
+            catalog: CatalogDto::default(),
         }
     }
 }
@@ -176,6 +199,38 @@ pub struct OptionDto {
 pub struct ChoiceValueDto {
     pub value: String,
     pub label: String,
+}
+
+#[derive(Clone, Debug, Serialize, Default)]
+pub struct CatalogProviderDto {
+    pub id: String,
+    pub name: String,
+}
+
+#[derive(Clone, Debug, Serialize, Default)]
+pub struct CatalogItemDto {
+    pub kind: String,
+    pub title: String,
+    pub detail: String,
+    pub url: String,
+    pub selected: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Default)]
+pub struct CatalogDto {
+    pub input: String,
+    pub provider: Option<String>,
+    pub providers: Vec<CatalogProviderDto>,
+    pub busy: bool,
+    pub error: Option<String>,
+    pub title: String,
+    pub note: String,
+    pub items: Vec<CatalogItemDto>,
+    pub next: Option<String>,
+    pub can_go_back: bool,
+    pub can_retry: bool,
+    pub showing_home: bool,
+    pub home_feed_active: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Default)]
@@ -381,6 +436,66 @@ fn handle(app: &mut App, command: Command) -> bool {
             app.set_pick(&extension, &option, index);
             true
         }
+        Command::CatalogSubmit { input } => {
+            app.catalog.input.text = input;
+            app.submit_catalog();
+            true
+        }
+        Command::CatalogOpen { url } => {
+            app.open_catalog(url, false);
+            true
+        }
+        Command::CatalogSelect { url, selected } => {
+            if selected {
+                app.catalog.selected.insert(url);
+            } else {
+                app.catalog.selected.remove(&url);
+            }
+            true
+        }
+        Command::CatalogSelectAll { selected } => {
+            let urls: Vec<String> = app
+                .catalog
+                .result
+                .iter()
+                .flat_map(|page| page.items.iter())
+                .filter(|item| item.kind == flacora::catalog::Kind::Track)
+                .map(|item| item.url.clone())
+                .collect();
+            for url in urls {
+                if selected {
+                    app.catalog.selected.insert(url);
+                } else {
+                    app.catalog.selected.remove(&url);
+                }
+            }
+            true
+        }
+        Command::CatalogQueue => {
+            app.prepare_catalog_tracks();
+            app.enqueue();
+            true
+        }
+        Command::CatalogBack => {
+            app.catalog.back();
+            true
+        }
+        Command::CatalogMore => {
+            app.catalog_more();
+            true
+        }
+        Command::CatalogRetry => {
+            app.retry_catalog();
+            true
+        }
+        Command::CatalogHome => {
+            app.toggle_catalog_home();
+            true
+        }
+        Command::CatalogProvider { id } => {
+            app.catalog.select_provider(id);
+            true
+        }
     }
 }
 
@@ -418,6 +533,43 @@ fn snapshot(app: &App) -> State {
             .iter()
             .map(|service| ServiceDto { key: service.key.to_string(), name: service.name.to_string() })
             .collect(),
+        catalog: catalog_dto(app),
+    }
+}
+
+fn catalog_dto(app: &App) -> CatalogDto {
+    let catalog = &app.catalog;
+    let result = catalog.result.clone();
+    CatalogDto {
+        input: catalog.input.text.clone(),
+        provider: app.chosen_catalog_provider().map(|provider| provider.manifest.id.clone()),
+        providers: app
+            .catalog_providers()
+            .map(|provider| CatalogProviderDto {
+                id: provider.manifest.id.clone(),
+                name: provider.manifest.name.clone(),
+            })
+            .collect(),
+        busy: catalog.busy(),
+        error: catalog.error.clone(),
+        title: result.as_ref().map(|page| page.title.clone()).unwrap_or_default(),
+        note: result.as_ref().map(|page| page.note.clone()).unwrap_or_default(),
+        items: result
+            .iter()
+            .flat_map(|page| page.items.iter())
+            .map(|item| CatalogItemDto {
+                kind: item.kind.label().to_string(),
+                title: item.title.clone(),
+                detail: item.detail.clone(),
+                url: item.url.clone(),
+                selected: catalog.selected.contains(&item.url),
+            })
+            .collect(),
+        next: result.as_ref().and_then(|page| page.next.clone()),
+        can_go_back: catalog.can_go_back(),
+        can_retry: catalog.can_retry(),
+        showing_home: catalog.showing_home(),
+        home_feed_active: catalog.home_feed_active(),
     }
 }
 

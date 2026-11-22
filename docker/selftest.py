@@ -139,7 +139,7 @@ def run(image):
         if not loaded:
             return False
 
-        for path, marker in (("/", "flacora"), ("/app.js", "renderDownloads"), ("/style.css", "badge")):
+        for path, marker in (("/", "Flacora"), ("/app.js", "renderDownloads"), ("/style.css", "badge")):
             try:
                 with urllib.request.urlopen(f"{base}{path}", timeout=5) as response:
                     status = response.status

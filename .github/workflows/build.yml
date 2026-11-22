@@ -38,7 +38,11 @@ jobs:
           context: .
           platforms: linux/amd64
           push: ${{ github.ref == 'refs/heads/main' }}
+          load: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: End-to-end container check
+        run: python3 docker/selftest.py ghcr.io/benjithatfoxguy/flacora:latest

@@ -1,6 +1,8 @@
 # Flacora in Docker
 
-This image runs the upstream Flacora desktop AppImage in the same kind of virtual desktop used by [docker-jdownloader-2](https://github.com/jlesage/docker-jdownloader-2). The browser displays the actual Flacora window. It does not use the fork's custom web frontend.
+This image runs the fork's **headless server**: Flacora's download engine plus a
+web UI, with no desktop, GPU or VNC involved. Paste links, manage the queue,
+install extensions and browse the downloaded files from the browser.
 
 ## Run
 
@@ -13,17 +15,31 @@ docker run -d --name flacora --restart unless-stopped \
   ghcr.io/benjithatfoxguy/flacora:latest
 ```
 
-Open <http://localhost:8080>. Native VNC is optional: publish container port `5900` if you need it. Keep the web desktop on a trusted network or behind an authenticated proxy; it is not authenticated by default. The browser port remains `8080`, so existing port mappings can stay as they are.
+or with Compose:
 
-- `/config` holds Flacora settings, history, extensions and extension data. Existing settings are kept.
-- `/output` holds downloads. New configurations default to `/output`; check **Settings → Download Folder** if an existing configuration points elsewhere.
-- `USER_ID` and `GROUP_ID` default to `1000`. Set them to match the owner of your mounts if needed. Flacora needs write access to both paths.
-- To use the same music folder as Navidrome, mount that host folder as Flacora's `/output` and leave Navidrome's existing music mount unchanged.
+```sh
+docker compose up -d
+```
+
+Then open <http://localhost:8080>.
+
+- `/config` holds settings, history, installed extensions and their data.
+- `/output` holds downloads. New configurations default to `/output`.
+- Both mounts are created if missing and chowned to the in-container `flacora`
+  user (uid 1000) on startup.
+- To share a library with Navidrome, mount the same host folder as Flacora's
+  `/output` and leave Navidrome's music mount unchanged.
+- Keep the port on a trusted network or behind an authenticated proxy; the web
+  UI has no login.
 
 ## Extensions
 
-To install a trusted `.fext`, upload it to `/output` using the browser desktop's file manager. Then open **Extensions** inside Flacora and select the package from `/output`. FFmpeg comes with the container. Browser-backed extensions may need their own first-run setup.
+Open **Extensions**, pick a `.fext` package and install it. Packages are listed
+at <https://rentry.org/flacora>. FFmpeg is included in the image. Browser-backed
+extensions download their browser on first use.
 
 ## Builds
 
-GitHub Actions downloads the pinned `linux-x64` AppImage from [upstream Releases](https://github.com/spotbye/Flacora/releases), checks its SHA-256, and extracts it at build time. No FUSE device, GPU passthrough, or privileged mode is required. The image is `linux/amd64`.
+GitHub Actions builds the image from source on every push to `main` and publishes
+it to `ghcr.io/benjithatfoxguy/flacora` (`latest`, plus the short SHA). The image
+is `linux/amd64`.

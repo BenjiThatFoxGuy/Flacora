@@ -19,9 +19,11 @@
 
 ---
 
-## Docker / browser desktop
+## Docker / headless server
 
-This fork packages the upstream Linux AppImage with a browser-accessible virtual desktop and optional VNC. See [DOCKER.md](DOCKER.md).
+This fork packages Flacora's download engine as a headless web server: paste
+links, manage the queue, install extensions and browse downloads from the
+browser. No desktop, GPU or VNC. See [DOCKER.md](DOCKER.md).
 
 ```sh
 docker compose up -d

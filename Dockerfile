@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 
-# ── Stage 1: build Flacora from source ──────────────────────────────────────
+# ── Stage 1: build the headless server from source ──────────────────────────
 FROM rust:1.86-bookworm AS builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -9,39 +9,47 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /build
 
-# Copy everything, fetch, patch, build - no layer caching tricks.
-COPY . .
+# Manifests first: cargo fetch is cached until the dependency set changes.
+COPY Cargo.toml Cargo.lock ./
+COPY server/Cargo.toml server/Cargo.toml
+RUN mkdir -p src server/src \
+    && echo 'fn main(){}' > src/main.rs \
+    && echo '' > src/lib.rs \
+    && echo 'fn main(){}' > server/src/main.rs
 RUN cargo fetch
-RUN sh docker/patch-shader.sh
 
-# Nuke any cached rune artifacts so the patched shader is recompiled.
-RUN find target -path '*/rune-*' -name '*.d' -delete 2>/dev/null; \
-    find target -path '*/rune-*' -name '*.rlib' -delete 2>/dev/null; \
-    find target -path '*/rune-*' -name '*.rmeta' -delete 2>/dev/null; \
-    rm -rf target/release/.fingerprint/rune-* target/release/build/rune-* || true
+# Real source: this layer (and the build) busts only when the code changes.
+COPY . .
+RUN touch src/main.rs src/lib.rs server/src/main.rs
+RUN RUSTFLAGS="" cargo build --release -p flacora-server
 
-RUN RUSTFLAGS="" cargo build --release --bin flacora
+# ── Stage 2: runtime ────────────────────────────────────────────────────────
+# ffmpeg: extensions that remux or tag need it on PATH.
+# The rest are the shared libraries Chromium links against: browser-backed
+# extensions download their own Chromium into /config/cloakbrowser on first use.
+FROM debian:bookworm-slim
 
-# ── Stage 2: runtime on jlesage/baseimage-gui ───────────────────────────────
-FROM jlesage/baseimage-gui:ubuntu-24.04-v4.14.0
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates ffmpeg gosu \
+    libasound2t64 libatk-bridge2.0-0t64 libatk1.0-0t64 libatspi2.0-0t64 \
+    libcairo2 libcups2t64 libdbus-1-3 libdrm2 libgbm1 libglib2.0-0t64 \
+    libnspr4 libnss3 libpango-1.0-0 libx11-6 libxcb1 libxcomposite1 \
+    libxdamage1 libxext6 libxfixes3 libxkbcommon0 libxrandr2 libxtst6 \
+    fonts-liberation \
+    && rm -rf /var/lib/apt/lists/*
 
-RUN add-pkg ca-certificates dbus-bin ffmpeg fonts-dejavu-core fonts-liberation \
-    libasound2t64 libatk-bridge2.0-0t64 libcups2t64 libgbm1 libgl1 libgl1-mesa-dri \
-    libegl1 libnspr4 libnss3 libvulkan1 mesa-vulkan-drivers libudev1 \
-    libwayland-client0 libx11-xcb1 libxcb-xfixes0 libxcomposite1 libxdamage1 \
-    libxrandr2 libxkbcommon0 libxkbcommon-x11-0 xdg-desktop-portal-gtk \
-    && set-cont-env APP_NAME Flacora \
-    && set-cont-env WGPU_BACKEND gl \
-    && set-cont-env LIBGL_ALWAYS_SOFTWARE 1
+RUN useradd -m -s /bin/sh flacora
 
-COPY --from=builder /build/target/release/flacora /opt/flacora/flacora
-COPY --chmod=755 docker/startapp.sh /startapp.sh
+COPY --from=builder /build/target/release/flacora-server /usr/local/bin/flacora-server
+COPY --chmod=755 docker/entrypoint.sh /entrypoint.sh
 
-ENV WEB_LISTENING_PORT=8080 \
-    DISPLAY_WIDTH=1280 \
-    DISPLAY_HEIGHT=768 \
-    KEEP_APP_RUNNING=1 \
-    WEB_FILE_MANAGER=1 \
-    WEB_FILE_MANAGER_ALLOWED_PATHS=/output
+ENV FLACORA_HOME=/config \
+    FLACORA_OUTPUT=/output \
+    FLACORA_HOST=0.0.0.0 \
+    FLACORA_PORT=8080
+
 EXPOSE 8080
-VOLUME ["/output"]
+VOLUME ["/config", "/output"]
+
+ENTRYPOINT ["/entrypoint.sh"]
+CMD ["flacora-server"]

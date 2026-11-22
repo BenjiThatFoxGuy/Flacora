@@ -16,3 +16,18 @@
 
 #### Disclaimer
 <sup>Flacora is an independent open-source project. Service names and logos identify compatible music services and belong to their respective owners. Downloads require separately installed extensions. Use Flacora only for content you have permission to download, and follow the applicable laws and service terms.</sup>
+
+---
+
+## Docker / web UI
+
+This fork also ships a headless build: the same download engine with a browser
+UI, for a server with no display. See [DOCKER.md](DOCKER.md).
+
+```sh
+docker compose up -d
+```
+
+Then open <http://localhost:8080>. The image is published to
+`ghcr.io/benjithatfoxguy/flacora`.
+

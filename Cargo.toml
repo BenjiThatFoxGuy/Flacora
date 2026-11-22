@@ -37,3 +37,7 @@ parley_engine = { git = "https://github.com/anomalyco/rune", rev = "47eaa86eba75
 wgpu-hal = { git = "https://github.com/anomalyco/rune", rev = "47eaa86eba751687597d0aaf6ee325baeecd4666" }
 accesskit_windows = { git = "https://github.com/anomalyco/rune", rev = "47eaa86eba751687597d0aaf6ee325baeecd4666" }
 accesskit_macos = { git = "https://github.com/anomalyco/rune", rev = "47eaa86eba751687597d0aaf6ee325baeecd4666" }
+
+[workspace]
+members = ["server"]
+

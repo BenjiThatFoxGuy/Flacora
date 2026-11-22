@@ -1,0 +1,95 @@
+name: build-image
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: build-image-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: "1.99.1"
+          rustflags: ""
+          cache: true
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libdbus-1-dev libudev-dev libwayland-dev libxkbcommon-dev pkg-config
+      - name: Compile the workspace and tests
+        run: cargo test --workspace --no-run
+      - name: Build the server binary
+        run: cargo build --release -p flacora-server
+      - name: Smoke-test the headless server
+        env:
+          FLACORA_HOME: /tmp/flacora-smoke
+          FLACORA_OUTPUT: /tmp/flacora-smoke/music
+          FLACORA_PORT: "8080"
+        run: |
+          ./target/release/flacora-server > /tmp/flacora-server.log 2>&1 &
+          pid=$!
+          for _ in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8080/api/version; then break; fi
+            sleep 0.5
+          done
+          echo
+          state=""
+          for _ in $(seq 1 30); do
+            state=$(curl -fsS http://127.0.0.1:8080/api/state)
+            if echo "$state" | grep -q '"loaded":true'; then break; fi
+            sleep 0.5
+          done
+          echo "$state" | head -c 500
+          echo
+          curl -fsS http://127.0.0.1:8080/ | head -c 120
+          echo
+          curl -fsS http://127.0.0.1:8080/app.js | head -c 80
+          echo
+          kill "$pid" 2>/dev/null || true
+          wait "$pid" 2>/dev/null || true
+          cat /tmp/flacora-server.log
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cargo-lock
+          path: Cargo.lock
+
+  image:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/metadata-action@v5
+        id: meta
+        with:
+          images: ghcr.io/benjithatfoxguy/flacora
+          tags: |
+            type=ref,event=branch
+            type=sha,format=short
+            type=raw,value=latest,enable={{is_default_branch}}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          push: ${{ github.ref == 'refs/heads/main' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

@@ -174,13 +174,15 @@ pub struct App {
     pub confirm_action: Option<ConfirmAction>,
     /// Package files being installed.
     pub importing: usize,
-    pub(crate) window: Option<rune::WindowHandle>,
+    /// The window's GPU handle; the GUI sets it on window creation.
+    pub window: Option<rune::WindowHandle>,
     pub(crate) browsing_packages: bool,
     pub(crate) pending_imports: VecDeque<PathBuf>,
     pub(crate) pending_checks: BTreeSet<String>,
     /// Files are being dragged over the window.
     pub drop_over: bool,
-    pub(crate) waker: Option<Waker>,
+    /// The waker background threads use to schedule a frame; the GUI sets it on ready.
+    pub waker: Option<Waker>,
     pub link: Option<Link>,
 }
 

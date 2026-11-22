@@ -1,0 +1,6 @@
+.git
+target
+**/target
+.docker
+compose.yaml
+compose.yml

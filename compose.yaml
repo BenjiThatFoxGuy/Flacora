@@ -1,0 +1,12 @@
+services:
+  flacora:
+    image: ghcr.io/benjithatfoxguy/flacora:latest
+    container_name: flacora
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      TZ: Europe/London
+    volumes:
+      - ./config:/config
+      - ./music:/output

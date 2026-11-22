@@ -1,18 +1,27 @@
 # syntax=docker/dockerfile:1
-FROM ubuntu:24.04 AS upstream
-ARG FLACORA_VERSION=1.0.2
-ARG FLACORA_SHA256=1765a3d71c5e5a44e09de5ffdd07b5dc62fc2bc4d96829aaa20dbf05c1e294ec
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl
-WORKDIR /tmp/flacora
-RUN curl --fail --location --retry 3 -o Flacora.AppImage \
-      "https://github.com/spotbye/Flacora/releases/download/v${FLACORA_VERSION}/Flacora-${FLACORA_VERSION}-linux-x64.AppImage" \
-    && printf '%s  Flacora.AppImage\n' "$FLACORA_SHA256" | sha256sum -c - \
-    && chmod +x Flacora.AppImage \
-    && ./Flacora.AppImage --appimage-extract >/dev/null \
-    && test -x squashfs-root/AppRun
 
-# Same Xvnc + browser desktop base as docker-jdownloader-2, with glibc for the AppImage.
+# ── Stage 1: build Flacora from source ──────────────────────────────────────
+FROM rust:1.86-bookworm AS builder
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libdbus-1-dev libudev-dev libwayland-dev libxkbcommon-dev pkg-config \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build
+COPY . .
+
+# Fetch all git dependencies first so we can patch the shader.
+RUN cargo fetch
+
+# Replace unpack2x16float (needs SHADER_FLOAT16_IN_FLOAT32, which llvmpipe
+# lacks) with a manual f16→f32 polyfill that works on any backend.
+RUN sh docker/patch-shader.sh
+
+RUN RUSTFLAGS="" cargo build --release --bin flacora
+
+# ── Stage 2: runtime on jlesage/baseimage-gui ───────────────────────────────
 FROM jlesage/baseimage-gui:ubuntu-24.04-v4.14.0
+
 RUN add-pkg ca-certificates dbus-bin ffmpeg fonts-dejavu-core fonts-liberation \
     libasound2t64 libatk-bridge2.0-0t64 libcups2t64 libgbm1 libgl1 libgl1-mesa-dri \
     libegl1 libnspr4 libnss3 libvulkan1 mesa-vulkan-drivers libudev1 \
@@ -20,10 +29,9 @@ RUN add-pkg ca-certificates dbus-bin ffmpeg fonts-dejavu-core fonts-liberation \
     libxrandr2 libxkbcommon0 libxkbcommon-x11-0 xdg-desktop-portal-gtk \
     && set-cont-env APP_NAME Flacora \
     && set-cont-env WGPU_BACKEND gl \
-    && set-cont-env LIBGL_ALWAYS_SOFTWARE 1 \
-    && set-cont-env RUNE_GPU_LOG 1
+    && set-cont-env LIBGL_ALWAYS_SOFTWARE 1
 
-COPY --from=upstream /tmp/flacora/squashfs-root/ /opt/flacora/
+COPY --from=builder /build/target/release/flacora /opt/flacora/flacora
 COPY --chmod=755 docker/startapp.sh /startapp.sh
 
 # Preserve the existing Compose port mapping. Native VNC uses 5900.

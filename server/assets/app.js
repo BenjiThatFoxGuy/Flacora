@@ -4,6 +4,7 @@ let state = null;
 let page = 'downloads';
 const ui = {
   urls: '',
+  enqueueError: '',
   extension: 'auto',
   openLogs: new Set(),
   filePath: '',
@@ -92,6 +93,37 @@ function candidatesFor(url) {
   return [...downloaders, ...resolvers];
 }
 
+function renderCatalog() {
+  const catalog = state.catalog;
+  if (!catalog) return '';
+  const result = catalog.result;
+  return `<section class="card" style="margin-top:14px">
+    <h2>${esc(result?.title || 'Catalog')}</h2>
+    <p class="muted">${esc(catalog.url)}</p>
+    ${catalog.busy ? '<p role="status">Loading catalog…</p>' : ''}
+    ${catalog.error ? `<p role="alert" style="color:var(--bad)">${esc(catalog.error)}</p>` : ''}
+    ${result?.note ? `<p>${esc(result.note)}</p>` : ''}
+    ${result && !result.items.length ? '<p>No results.</p>' : ''}
+    ${result?.items.some((item) => item.track) ? '<button class="button small" id="catalog-queue-all">Queue all loaded tracks</button>' : ''}
+    <div class="list" style="margin-top:10px">${(result?.items ?? []).map((item, index) => `
+      <div class="item"><div class="grow"><strong>${esc(item.title)}</strong>
+        <div class="meta">${esc(item.detail)}</div></div>
+        <button class="icon-btn" data-catalog-item="${index}">${item.track ? 'Queue track' : 'Open'}</button>
+      </div>`).join('')}</div>
+    ${result?.more ? `<button class="button ghost small" id="catalog-more" ${catalog.busy ? 'disabled' : ''}>Load more</button>` : ''}
+  </section>`;
+}
+
+async function catalogAction(path, body) {
+  try {
+    await post(path, body);
+    ui.enqueueError = '';
+  } catch (error) {
+    ui.enqueueError = error.message;
+  }
+  renderDownloads();
+}
+
 function renderDownloads() {
   const urls = ui.urls.split('\n').map((line) => line.trim()).filter(Boolean);
   const candidates = urls.length === 1 ? candidatesFor(urls[0]) : [];
@@ -151,6 +183,7 @@ function renderDownloads() {
         <h2>Add download</h2>
         <label>Paste one or more links</label>
         <textarea id="urls" placeholder="https://tidal.com/track/...">${esc(ui.urls)}</textarea>
+        <p id="enqueue-error" role="alert" style="color:var(--bad)" ${ui.enqueueError ? '' : 'hidden'}>${esc(ui.enqueueError)}</p>
         ${candidates.length ? `<label>Downloader</label>
         <select id="extension">
           <option value="auto" ${ui.extension === 'auto' ? 'selected' : ''}>Automatic</option>
@@ -171,8 +204,18 @@ function renderDownloads() {
         </div>
         <div class="queue">${jobs || '<div class="empty">Nothing queued.</div>'}</div>
       </div>
-    </div>`;
+    </div>${renderCatalog()}`;
 
+  const catalogItems = state.catalog?.result?.items ?? [];
+  main.querySelectorAll('[data-catalog-item]').forEach((button) => button.addEventListener('click', () => {
+    const item = catalogItems[Number(button.dataset.catalogItem)];
+    if (item) catalogAction('/api/enqueue', { urls: [item.url] });
+  }));
+  document.getElementById('catalog-queue-all')?.addEventListener('click', () => {
+    const urls = [...new Set(catalogItems.filter((item) => item.track).map((item) => item.url))];
+    if (urls.length) catalogAction('/api/enqueue', { urls });
+  });
+  document.getElementById('catalog-more')?.addEventListener('click', () => catalogAction('/api/catalog/more'));
   document.getElementById('urls').addEventListener('input', (event) => { ui.urls = event.target.value; });
   document.getElementById('enqueue').addEventListener('click', enqueue);
   const extensionSelect = document.getElementById('extension');
@@ -208,9 +251,20 @@ async function enqueue() {
       if (index >= 0) options.push({ extension: selected.id, option: select.dataset.option, index });
     }
   }
-  await post('/api/enqueue', { urls, options });
-  ui.urls = '';
-  refresh();
+  const draft = ui.urls;
+  try {
+    await post('/api/enqueue', { urls, options });
+    if (ui.urls === draft) ui.urls = '';
+    ui.enqueueError = '';
+    refresh();
+  } catch (error) {
+    ui.enqueueError = error.message;
+    const alert = document.getElementById('enqueue-error');
+    if (alert) {
+      alert.textContent = ui.enqueueError;
+      alert.hidden = false;
+    }
+  }
 }
 
 // -------------------------------------------------------------------- library

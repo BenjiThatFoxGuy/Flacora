@@ -24,6 +24,7 @@ pub fn router(shared: Arc<Shared>) -> Router {
     Router::new()
         .route("/api/state", get(get_state))
         .route("/api/enqueue", post(post_enqueue))
+        .route("/api/catalog/more", post(catalog_more))
         .route("/api/jobs/clear-finished", post(clear_finished))
         .route("/api/jobs/cancel-all", post(cancel_all))
         .route("/api/jobs/retry-failed", post(retry_failed))
@@ -124,7 +125,39 @@ struct EnqueueRequest {
     options: Vec<PickRequest>,
 }
 
+fn validate_track_links(urls: &[String]) -> Result<(), &'static str> {
+    let links: Vec<_> = urls.iter().flat_map(|line| line.split_whitespace()).collect();
+    if links.is_empty() {
+        return Err("Paste at least one music link.");
+    }
+    if links.len() > 1 && links.iter().any(|link| flacora::catalog::is_catalog_url(link)) {
+        return Err("Open an album, artist, or playlist link on its own to choose tracks.");
+    }
+    for link in links {
+        if flacora::extensions::url_host(link).is_none() {
+            return Err("Use complete track URLs, such as https://open.spotify.com/track/…");
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+#[test]
+fn track_validation_rejects_catalog_urls_and_preserves_track_batches() {
+    let track = "https://open.spotify.com/track/1CPZ5BxNNd0n0nF4Orb9JS";
+    let playlist = "https://open.spotify.com/playlist/37i9dQZEVXbNG2KDcFcKOF";
+    assert!(validate_track_links(&[track.into()]).is_ok());
+    assert!(validate_track_links(&[playlist.into()]).is_ok());
+    assert!(validate_track_links(&[format!("{track}\n{track}")]).is_ok());
+    assert!(validate_track_links(&[format!("{track} {playlist}")]).unwrap_err().contains("playlist"));
+    assert!(validate_track_links(&["not a link".into()]).is_err());
+    assert!(validate_track_links(&[]).is_err());
+}
+
 async fn post_enqueue(state: SharedState, Json(request): Json<EnqueueRequest>) -> Response {
+    if let Err(error) = validate_track_links(&request.urls) {
+        return (StatusCode::UNPROCESSABLE_ENTITY, error).into_response();
+    }
     let options = request
         .options
         .into_iter()
@@ -134,6 +167,10 @@ async fn post_enqueue(state: SharedState, Json(request): Json<EnqueueRequest>) -
         &state.cmd_tx,
         Command::Enqueue { urls: request.urls, service: request.service, options },
     )
+}
+
+async fn catalog_more(state: SharedState) -> Response {
+    send(&state.cmd_tx, Command::CatalogMore)
 }
 
 async fn clear_finished(state: SharedState) -> Response {

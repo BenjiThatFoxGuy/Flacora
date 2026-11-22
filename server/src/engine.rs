@@ -32,6 +32,7 @@ pub enum Command {
     CancelJob(u64),
     RetryJob(u64),
     RemoveJob(u64),
+    CatalogMore,
     ClearFinished,
     CancelAll,
     RetryFailed,
@@ -81,6 +82,7 @@ pub struct State {
     pub tools: ToolsDto,
     pub update: Option<UpdateDto>,
     pub notices: Vec<NoticeDto>,
+    pub catalog: Option<serde_json::Value>,
     pub services: Vec<ServiceDto>,
 }
 
@@ -98,6 +100,7 @@ impl Default for State {
             tools: ToolsDto::default(),
             update: None,
             notices: Vec::new(),
+            catalog: None,
             services: services::SERVICES
                 .iter()
                 .map(|service| ServiceDto { key: service.key.to_string(), name: service.name.to_string() })
@@ -301,6 +304,10 @@ fn handle(app: &mut App, command: Command) -> bool {
             app.remove_job(id);
             true
         }
+        Command::CatalogMore => {
+            app.catalog_more();
+            true
+        }
         Command::ClearFinished => {
             app.clear_finished();
             true
@@ -414,6 +421,20 @@ fn snapshot(app: &App) -> State {
             url: release.url.to_string(),
         }),
         notices: notices_dto(app),
+        catalog: (!app.catalog.input.text.is_empty()).then(|| serde_json::json!({
+            "url": app.catalog.input.text,
+            "busy": app.catalog.busy(),
+            "error": app.catalog.error,
+            "result": app.catalog.result.as_ref().map(|result| serde_json::json!({
+                "title": result.title,
+                "note": result.note,
+                "more": result.next.is_some(),
+                "items": result.items.iter().map(|item| serde_json::json!({
+                    "title": item.title, "detail": item.detail, "url": item.url,
+                    "track": item.kind == flacora::catalog::Kind::Track,
+                })).collect::<Vec<_>>(),
+            })),
+        })),
         services: services::SERVICES
             .iter()
             .map(|service| ServiceDto { key: service.key.to_string(), name: service.name.to_string() })
@@ -588,13 +609,11 @@ fn entry_dto(entry: &Entry) -> EntryDto {
 
 fn notices_dto(app: &App) -> Vec<NoticeDto> {
     let mut notices = Vec::new();
-    for (notification, kind) in [
-        (&app.notice, NotificationKind::Success),
-        (&app.info, NotificationKind::Warning),
-    ] {
-        if let Some(notification) = notification {
-            notices.push(NoticeDto { kind: notice_kind(kind).to_string(), message: notification.message.clone() });
-        }
+    for notification in [&app.notice, &app.info].into_iter().flatten() {
+        notices.push(NoticeDto {
+            kind: notice_kind(notification.kind).to_string(),
+            message: notification.message.clone(),
+        });
     }
     notices
 }

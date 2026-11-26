@@ -73,24 +73,33 @@ echo "@flacora {\\"event\\":\\"stage\\",\\"text\\":\\"downloaded\\"}"
 echo "@flacora {\\"event\\":\\"saved\\",\\"path\\":\\"$target\\"}"
 """
 
-# A catalog provider answers --search/--browse with one catalog page.
+# A catalog provider answers --search/--browse with one catalog page. Shell
+# single quotes keep the JSON double quotes intact.
 CATALOG_SCRIPT = """#!/bin/sh
+# cat.sh --search <query> | --browse <url> | --home
 case "$1" in
-    --search) title="Search: $2" ;;
-    --browse) 
-        if echo "$2" | grep -q 'artist/'; then
-            # Artist page: return albums
-            echo "@flacora {"event":"catalog","page":{"title":"Artist: $2","note":"synthetic","items":[{"kind":"album","title":"Album 1","detail":"Synthetic","url":"https://example.test/album/1"},{"kind":"album","title":"Album 2","detail":"Synthetic","url":"https://example.test/album/2"}],"next":"cursor:album-page-1","artwork":null}}"
-        elif echo "$2" | grep -q 'album/'; then
-            # Album page: return tracks + next cursor to artist
-            echo "@flacora {"event":"catalog","page":{"title":"Album: $2","note":"synthetic","items":[{"kind":"track","title":"Track A","detail":"Synthetic","url":"https://example.test/track/1"},{"kind":"track","title":"Track B","detail":"Synthetic","url":"https://example.test/track/2"},{"kind":"track","title":"Track C","detail":"Synthetic","url":"https://example.test/track/3"}],"next":"cursor:artist-page","artwork":null}}"
-        else
-            title="Home"
-        fi
+    --search)
+        echo '@flacora {"event":"catalog","page":{"title":"Search","note":"synthetic","items":[{"kind":"track","title":"Track A","detail":"Synthetic","url":"https://example.test/track/1"},{"kind":"track","title":"Track B","detail":"Synthetic","url":"https://example.test/track/2"},{"kind":"album","title":"Album 1","detail":"Synthetic","url":"https://example.test/album/1"},{"kind":"album","title":"Album 2","detail":"Synthetic","url":"https://example.test/album/2"}],"next":null,"artwork":null}}'
+        exit 0
         ;;
-    *) title="Home" ;;
+    --browse)
+        case "$2" in
+            *artist/*)
+                echo '@flacora {"event":"catalog","page":{"title":"Artist","note":"synthetic","items":[{"kind":"album","title":"Album 1","detail":"Synthetic","url":"https://example.test/album/1"},{"kind":"album","title":"Album 2","detail":"Synthetic","url":"https://example.test/album/2"}],"next":null,"artwork":null}}'
+                exit 0
+                ;;
+            *album/1*)
+                echo '@flacora {"event":"catalog","page":{"title":"Album 1","note":"synthetic","items":[{"kind":"track","title":"Track 1","detail":"Synthetic","url":"https://example.test/track/1"},{"kind":"track","title":"Track 2","detail":"Synthetic","url":"https://example.test/track/2"},{"kind":"track","title":"Track 3","detail":"Synthetic","url":"https://example.test/track/3"}],"next":null,"artwork":null}}'
+                exit 0
+                ;;
+            *album/2*)
+                echo '@flacora {"event":"catalog","page":{"title":"Album 2","note":"synthetic","items":[{"kind":"track","title":"Track 4","detail":"Synthetic","url":"https://example.test/track/4"},{"kind":"track","title":"Track 5","detail":"Synthetic","url":"https://example.test/track/5"},{"kind":"track","title":"Track 6","detail":"Synthetic","url":"https://example.test/track/6"}],"next":null,"artwork":null}}'
+                exit 0
+                ;;
+        esac
+        ;;
 esac
-echo "@flacora {"event":"catalog","page":{"title":"Home","note":"synthetic","items":[],"next":null,"artwork":null}}"
+echo '@flacora {"event":"catalog","page":{"title":"Home","note":"synthetic","items":[],"next":null,"artwork":null}}'
 """
 
 
@@ -265,7 +274,7 @@ def run(image):
 
         def catalog_listed():
             catalog = get_json(state_url)[1]["catalog"]
-            return len(catalog["items"]) == 2 and True
+            return len(catalog["items"]) >= 2 and True
 
         if not wait_for("catalog search lists tracks", catalog_listed):
             return False

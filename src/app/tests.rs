@@ -372,3 +372,12 @@ fn completed_downloads_can_queue_a_matching_web_tagger() {
         }
     }
 }
+
+#[test]
+fn startup_checks_skip_browser_backed_extensions() {
+    let mut app = fixtures::app();
+    app.link = Some(Link::new(Arc::new(|| {})));
+    app.check_all_on_load();
+    assert!(app.checking.contains_key("cyan-dl"), "cheap checks still start at boot");
+    assert!(!app.checking.contains_key("flacdownloader"), "a browser check must not race the first job");
+}

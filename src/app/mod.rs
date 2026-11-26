@@ -328,9 +328,11 @@ impl App {
                 self.load_history_covers();
                 self.refresh_library_files();
                 if self.importing == 0 {
-                    self.check_all();
+                    self.check_all_on_load();
                 } else {
-                    self.pending_checks.extend(self.installed.iter().map(|i| i.manifest.id.clone()));
+                    self.pending_checks.extend(self.installed.iter()
+                        .filter(|i| !i.manifest.browser)
+                        .map(|i| i.manifest.id.clone()));
                     self.start_import();
                 }
             }
@@ -493,6 +495,23 @@ impl App {
             return;
         }
         let ids: Vec<_> = self.installed.iter().map(|i| i.manifest.id.clone()).collect();
+        for id in ids {
+            self.check_status(&id);
+        }
+    }
+
+    /// Boot-time check: skip browser-backed extensions. Their status command
+    /// starts Chromium and can hold the browser slot for minutes, which used to
+    /// race the first download on a shared profile. The user-triggered
+    /// `check_all` still covers them, serialized by the browser slot.
+    fn check_all_on_load(&mut self) {
+        if self.importing > 0 {
+            return;
+        }
+        let ids: Vec<_> = self.installed.iter()
+            .filter(|i| !i.manifest.browser)
+            .map(|i| i.manifest.id.clone())
+            .collect();
         for id in ids {
             self.check_status(&id);
         }

@@ -381,3 +381,18 @@ fn startup_checks_skip_browser_backed_extensions() {
     assert!(app.checking.contains_key("cyan-dl"), "cheap checks still start at boot");
     assert!(!app.checking.contains_key("flacdownloader"), "a browser check must not race the first job");
 }
+
+#[test]
+fn stalled_jobs_time_out_and_free_the_queue() {
+    use std::time::{Duration, Instant};
+
+    let mut app = fixtures::app();
+    let id = fixtures::job(&mut app, "flacdownloader", "https://tidal.com/track/1", Status::Running);
+    app.jobs[0].started = Some(Instant::now() - Duration::from_secs(30));
+    assert!(app.timeout_stalled_jobs(Duration::from_secs(10)));
+    assert_eq!(
+        app.jobs.iter().find(|j| j.id == id).unwrap().status,
+        Status::Failed("Timed out after 10 seconds (the browser may be locked).".into())
+    );
+    assert!(!app.timeout_stalled_jobs(Duration::from_secs(10)), "timeout is one-shot");
+}

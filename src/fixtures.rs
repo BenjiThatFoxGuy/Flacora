@@ -84,6 +84,7 @@ pub fn job(app: &mut App, extension: &str, url: &str, status: Status) -> u64 {
         auto_tag: app.settings.auto_tag,
         staging: None,
         handle: (status == Status::Running).then(JobHandle::detached),
+        started: None,
         cancelling: false,
         status,
         title: None,

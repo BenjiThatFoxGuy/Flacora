@@ -307,6 +307,12 @@ pub fn run(cmd_rx: Receiver<Command>, state_tx: Sender<State>) {
     let mut app = App::default();
     app.connect(waker);
     let output_env = std::env::var_os("FLACORA_OUTPUT").filter(|value| !value.is_empty());
+    let job_timeout = std::env::var("FLACORA_JOB_TIMEOUT_SECS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|secs| *secs >= 60)
+        .map(Duration::from_secs)
+        .unwrap_or(Duration::from_secs(900));
     let mut applied_output = false;
     let mut tx = Tx::default();
     let mut clock = 0.0f64;
@@ -314,6 +320,7 @@ pub fn run(cmd_rx: Receiver<Command>, state_tx: Sender<State>) {
 
     loop {
         let changed = app.drain_with(clock, &mut tx);
+        let timed_out = app.timeout_stalled_jobs(job_timeout);
         if !applied_output && app.loaded {
             applied_output = true;
             if let Some(output) = &output_env
@@ -326,7 +333,7 @@ pub fn run(cmd_rx: Receiver<Command>, state_tx: Sender<State>) {
         while let Ok(command) = cmd_rx.try_recv() {
             commanded |= handle(&mut app, command);
         }
-        if changed || commanded {
+        if changed || commanded || timed_out {
             let _ = state_tx.send(snapshot(&app));
         }
         clock += last.elapsed().as_secs_f64().max(0.016);

@@ -14,7 +14,7 @@ use crate::{
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 /// Log lines kept per job.
@@ -54,6 +54,8 @@ pub struct Job {
     pub auto_tag: bool,
     pub staging: Option<tempfile::TempDir>,
     pub status: Status,
+    /// When this job first started running, for the watchdog in `timeout_stalled_jobs`.
+    pub started: Option<Instant>,
     pub title: Option<String>,
     pub artist: Option<String>,
     pub album: Option<String>,
@@ -103,6 +105,7 @@ impl Job {
             staging: None,
             lookup_file: None,
             status: Status::Queued,
+            started: None,
             title: None,
             artist: None,
             album: None,
@@ -360,6 +363,7 @@ impl App {
         let handle = JobHandle::detached();
         let job = &mut self.jobs[index];
         job.status = Status::Running;
+        job.started.get_or_insert_with(Instant::now);
         job.stage = Some("Starting".into());
         job.handle = Some(handle.clone());
         std::thread::spawn(move || {
@@ -799,6 +803,39 @@ impl App {
         }
     }
 
+    /// Fails jobs that have been running longer than `limit` without an exit
+    /// event. A browser wedged on a locked profile used to leave the queue stuck
+    /// in `Running` until the container was recreated.
+    pub fn timeout_stalled_jobs(&mut self, limit: Duration) -> bool {
+        let now = Instant::now();
+        let stalled: Vec<u64> = self.jobs.iter()
+            .filter(|job| job.is_running() && job.started.is_some_and(|s| now.duration_since(s) > limit))
+            .map(|job| job.id)
+            .collect();
+        if stalled.is_empty() {
+            return false;
+        }
+        let elapsed = if limit.as_secs() < 60 {
+            format!("{} seconds", limit.as_secs())
+        } else {
+            format!("{} minutes", limit.as_secs() / 60)
+        };
+        let reason = format!("Timed out after {elapsed} (the browser may be locked).");
+        for id in stalled {
+            let Some(job) = self.jobs.iter_mut().find(|j| j.id == id && j.is_running()) else { continue };
+            if let Some(handle) = job.handle.take() {
+                handle.cancel();
+            }
+            job.cancelling = false;
+            job.stage = None;
+            job.progress = None;
+            job.log.push(reason.clone());
+            job.status = Status::Failed(reason.clone());
+        }
+        self.pump();
+        true
+    }
+
     pub fn cancel_job(&mut self, job_id: u64) {
         let Some(job) = self.jobs.iter_mut().find(|j| j.id == job_id) else { return };
         match job.status {
@@ -828,6 +865,7 @@ impl App {
         job.progress = None;
         job.stage = None;
         job.finished = None;
+        job.started = None;
         self.pump();
     }
 
@@ -881,6 +919,7 @@ impl App {
                 job.progress = None;
                 job.stage = None;
                 job.finished = None;
+        job.started = None;
                 retried = true;
             }
         }

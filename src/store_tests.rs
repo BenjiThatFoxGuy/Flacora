@@ -253,6 +253,9 @@ fn sweep_removes_stale_browser_locks_and_temp_installs() {
     let paths = Paths { root: dir.path().to_path_buf() };
     let profile = paths.data("lucida").join("profile");
     fs::create_dir_all(&profile).unwrap();
+    #[cfg(unix)]
+    std::os::unix::fs::symlink("dead-host-123", profile.join("SingletonLock")).unwrap();
+    #[cfg(not(unix))]
     fs::write(profile.join("SingletonLock"), "host-123").unwrap();
     fs::write(profile.join("SingletonCookie"), "abc").unwrap();
     fs::write(profile.join("keep.txt"), "keep").unwrap();
@@ -264,7 +267,7 @@ fn sweep_removes_stale_browser_locks_and_temp_installs() {
     fs::write(installed.join("chrome"), "real").unwrap();
 
     assert_eq!(sweep_browser_state(&paths), 3);
-    assert!(!profile.join("SingletonLock").exists());
+    assert!(fs::symlink_metadata(profile.join("SingletonLock")).is_err(), "dangling lock symlink must be removed");
     assert!(!profile.join("SingletonCookie").exists());
     assert!(profile.join("keep.txt").exists());
     assert!(!partial.exists(), "interrupted browser downloads must be swept");

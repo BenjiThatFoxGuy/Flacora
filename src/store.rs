@@ -437,7 +437,7 @@ fn check_services(paths: &Paths, installed: &Installed) -> Result<Vec<String>, S
         args: extensions::status_args(manifest, &fill),
         env: extensions::command_env(manifest, &fill),
         cwd: data,
-        browser: manifest.browser,
+        browser_root: manifest.browser.then(|| paths.root.clone()),
     };
     let (send, events) = channel();
     let handle = runner::spawn(spec, Arc::new(move |event| { let _ = send.send(event); }))?;
@@ -501,7 +501,9 @@ pub fn sweep_browser_state(paths: &Paths) -> usize {
             for entry in entries.flatten() {
                 let path = entry.path();
                 let name = entry.file_name();
-                if name.to_string_lossy().starts_with("Singleton") && path.is_file() {
+                // Chromium's SingletonLock is a symlink to a nonexistent
+                // host-pid target, so is_file() returns false for it.
+                if name.to_string_lossy().starts_with("Singleton") && fs::symlink_metadata(&path).is_ok() {
                     if fs::remove_file(&path).is_ok() {
                         removed += 1;
                     }

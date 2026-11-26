@@ -116,8 +116,9 @@ pub struct Spec {
     pub args: Vec<String>,
     pub env: Vec<(String, String)>,
     pub cwd: PathBuf,
-    /// Uses the shared browser profile; serialized against other browser processes.
-    pub browser: bool,
+    /// Some(root) when the process uses the shared browser profile. The slot is
+    /// held and stale locks are swept before the process starts.
+    pub browser_root: Option<PathBuf>,
 }
 
 /// Starts the process; every stdout/stderr line and finally the exit arrive through `send`.
@@ -134,8 +135,13 @@ pub fn spawn_into(handle: JobHandle, spec: Spec, send: Arc<dyn Fn(JobEvent) + Se
         return Ok(());
     }
     // Block here rather than in the waiter: a second browser must not even
-    // start until the first one has been reaped.
-    let browser_slot = spec.browser.then(browser_slot);
+    // start until the first one has been reaped. Sweep stale locks while the
+    // slot is held, so a failed job cannot poison the next one.
+    let browser_slot = spec.browser_root.as_ref().map(|root| {
+        let guard = browser_slot();
+        crate::store::sweep_browser_state(&crate::store::Paths { root: root.clone() });
+        guard
+    });
     std::fs::create_dir_all(&spec.cwd).map_err(|e| e.to_string())?;
     let mut command = Command::new(&spec.program);
     command
@@ -482,7 +488,7 @@ mod tests {
                 args: vec!["/C".into(), "echo hello".into()],
                 env: Vec::new(),
                 cwd: dir.path().to_path_buf(),
-                browser: false,
+                browser_root: None,
             }
         } else {
             Spec {
@@ -490,7 +496,7 @@ mod tests {
                 args: vec!["-c".into(), "echo hello".into()],
                 env: Vec::new(),
                 cwd: dir.path().to_path_buf(),
-                browser: false,
+                browser_root: None,
             }
         };
         let _handle = spawn(spec, Arc::new(move |e| { let _ = tx.send(e); })).unwrap();
@@ -516,7 +522,7 @@ mod tests {
                 args: vec!["/C".into(), "ping -n 30 127.0.0.1 >nul".into()],
                 env: Vec::new(),
                 cwd: dir.path().to_path_buf(),
-                browser: false,
+                browser_root: None,
             }
         } else {
             Spec {
@@ -524,7 +530,7 @@ mod tests {
                 args: vec!["-c".into(), "sleep 30".into()],
                 env: Vec::new(),
                 cwd: dir.path().to_path_buf(),
-                browser: false,
+                browser_root: None,
             }
         };
         let handle = spawn(spec, Arc::new(move |e| { let _ = tx.send(e); })).unwrap();
@@ -552,7 +558,7 @@ mod tests {
             args: vec!["-c".into(), "sleep 3 & exit 7".into()],
             env: Vec::new(),
             cwd: dir.path().to_path_buf(),
-            browser: false,
+            browser_root: None,
         };
         let started = Instant::now();
         let _handle = spawn(spec, Arc::new(move |e| { let _ = tx.send(e); })).unwrap();
@@ -578,7 +584,7 @@ mod tests {
             args: vec!["-c".into(), script.into()],
             env: Vec::new(),
             cwd: dir.path().to_path_buf(),
-            browser: true,
+            browser_root: Some(dir.path().to_path_buf()),
         };
         spawn(spec("echo first; sleep 1"), send.clone()).unwrap();
         let mut saw_first = false;

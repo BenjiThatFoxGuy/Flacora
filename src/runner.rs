@@ -7,9 +7,16 @@ use std::{
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, Ordering},
+        mpsc::{RecvTimeoutError, channel},
     },
     thread,
+    time::{Duration, Instant},
 };
+
+/// How long trailing output is collected after the direct child exits. A
+/// descendant can inherit the pipes and hold them open indefinitely, so this
+/// is a grace period, not a wait for EOF.
+const DRAIN_GRACE: Duration = Duration::from_millis(250);
 
 /// Maximum bytes buffered per output line before excess bytes are discarded until newline.
 const MAX_LINE_BYTES: usize = 256 * 1024;
@@ -121,30 +128,39 @@ pub fn spawn_into(handle: JobHandle, spec: Spec, send: Arc<dyn Fn(JobEvent) + Se
     #[cfg(unix)]
     let pgid = Some(child.id());
     let cancelled = handle.cancelled.clone();
-    let readers: Vec<_> = [
+    let streams: Vec<_> = [
         child.stdout.take().map(|s| Box::new(s) as Box<dyn Read + Send>),
         child.stderr.take().map(|s| Box::new(s) as Box<dyn Read + Send>),
     ]
     .into_iter()
     .flatten()
-    .map(|stream| {
-        let send = send.clone();
-        let cancelled = cancelled.clone();
-        thread::spawn(move || {
-            let mut reader = BufReader::new(stream);
-            let mut line = Vec::new();
-            while read_bounded_line(&mut reader, &mut line, MAX_LINE_BYTES).is_ok_and(|n| n > 0) {
-                if !cancelled.load(Ordering::Relaxed) {
-                    let text = String::from_utf8_lossy(&line).trim_end().to_owned();
-                    if !text.is_empty() {
-                        send(JobEvent::Line(text));
-                    }
-                }
-                line.clear();
-            }
-        })
-    })
     .collect();
+    let reader_count = streams.len();
+    let (drained_tx, drained_rx) = channel();
+    let _readers: Vec<_> = streams
+        .into_iter()
+        .map(|stream| {
+            let send = send.clone();
+            let cancelled = cancelled.clone();
+            let drained = drained_tx.clone();
+            thread::spawn(move || {
+                let mut reader = BufReader::new(stream);
+                let mut line = Vec::new();
+                while read_bounded_line(&mut reader, &mut line, MAX_LINE_BYTES).is_ok_and(|n| n > 0) {
+                    if !cancelled.load(Ordering::Relaxed) {
+                        let text = String::from_utf8_lossy(&line).trim_end().to_owned();
+                        if !text.is_empty() {
+                            send(JobEvent::Line(text));
+                        }
+                    }
+                    line.clear();
+                }
+                let _ = drained.send(());
+            })
+        })
+        .collect();
+    // With our sender dropped, the channel disconnects once every reader ends.
+    drop(drained_tx);
     if let Ok(mut state) = handle.state.lock() {
         state.child = Some(child);
         #[cfg(windows)]
@@ -161,22 +177,56 @@ pub fn spawn_into(handle: JobHandle, spec: Spec, send: Arc<dyn Fn(JobEvent) + Se
     }
     let waiter = handle;
     thread::spawn(move || {
-        // The pipes close when the process tree ends (or is killed); then reap the child.
-        for reader in readers {
-            let _ = reader.join();
-        }
-        let child = waiter.state.lock().ok().and_then(|mut s| {
-            #[cfg(windows)]
-            let _ = s.job.take();
-            #[cfg(unix)]
-            let _ = s.pgid.take();
-            s.child.take()
-        });
-        let exit = match child.map(|mut c| c.wait()) {
-            Some(Ok(status)) => Ok(status.code().unwrap_or(-1)),
-            Some(Err(e)) => Err(e.to_string()),
-            None => Err("The process handle was lost".into()),
+        // Reap the direct child without hiding it from `cancel()`. Joining the
+        // readers first used to block forever when a browser descendant held
+        // the pipes open; `try_wait` polls while the handle stays cancellable.
+        let exit = loop {
+            let mut state = match waiter.state.lock() {
+                Ok(state) => state,
+                Err(error) => error.into_inner(),
+            };
+            let Some(child) = state.child.as_mut() else {
+                break Err("The process handle was lost".to_owned());
+            };
+            match child.try_wait() {
+                Ok(Some(status)) => {
+                    let result = Ok(status.code().unwrap_or(-1));
+                    state.child.take();
+                    #[cfg(windows)]
+                    let _ = state.job.take();
+                    #[cfg(unix)]
+                    let _ = state.pgid.take();
+                    break result;
+                }
+                Ok(None) => {
+                    drop(state);
+                    thread::sleep(Duration::from_millis(20));
+                }
+                Err(error) => {
+                    let result = Err(error.to_string());
+                    state.child.take();
+                    #[cfg(windows)]
+                    let _ = state.job.take();
+                    #[cfg(unix)]
+                    let _ = state.pgid.take();
+                    break result;
+                }
+            }
         };
+        // Collect trailing lines briefly. A surviving grandchild may still hold
+        // a pipe open, so stop after the grace period and detach those readers.
+        let deadline = Instant::now() + DRAIN_GRACE;
+        let mut drained = 0;
+        while drained < reader_count {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                break;
+            }
+            match drained_rx.recv_timeout(remaining) {
+                Ok(()) => drained += 1,
+                Err(RecvTimeoutError::Timeout) | Err(RecvTimeoutError::Disconnected) => break,
+            }
+        }
         send(JobEvent::Exit(exit));
     });
     Ok(())
@@ -433,5 +483,31 @@ mod tests {
             }
         }
         assert!(exited, "cancelled process tree must exit promptly");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn exit_arrives_when_a_descendant_keeps_the_pipes_open() {
+        // A browser can leave a child holding stdout/stderr after the parent
+        // exits. The exit event must not wait for those inherited pipes to close.
+        let dir = tempfile::tempdir().unwrap();
+        let (tx, rx) = channel();
+        let spec = Spec {
+            program: PathBuf::from("sh"),
+            args: vec!["-c".into(), "sleep 3 & exit 7".into()],
+            env: Vec::new(),
+            cwd: dir.path().to_path_buf(),
+        };
+        let started = Instant::now();
+        let _handle = spawn(spec, Arc::new(move |e| { let _ = tx.send(e); })).unwrap();
+        let mut result = None;
+        while let Ok(event) = rx.recv_timeout(Duration::from_secs(2)) {
+            if let JobEvent::Exit(exit) = event {
+                result = Some(exit);
+                break;
+            }
+        }
+        assert!(started.elapsed() < Duration::from_secs(2), "exit must not wait for inherited pipes");
+        assert_eq!(result, Some(Ok(7)));
     }
 }

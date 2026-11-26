@@ -662,7 +662,7 @@ impl App {
         } else {
             self.catalog.pending = Some(pending);
         }
-        let spec = runner::Spec { program, args, env, cwd };
+        let spec = runner::Spec { program, args, env, cwd, browser: false };
         std::thread::spawn(move || {
             let timed = process.clone();
             let timeout_send = send.clone();

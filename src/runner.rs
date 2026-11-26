@@ -5,9 +5,9 @@ use std::{
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     sync::{
-        Arc, Mutex,
+        Arc, LazyLock, Mutex,
         atomic::{AtomicBool, Ordering},
-        mpsc::{RecvTimeoutError, channel},
+        mpsc::{Receiver, RecvTimeoutError, Sender, channel},
     },
     thread,
     time::{Duration, Instant},
@@ -20,6 +20,32 @@ const DRAIN_GRACE: Duration = Duration::from_millis(250);
 
 /// Maximum bytes buffered per output line before excess bytes are discarded until newline.
 const MAX_LINE_BYTES: usize = 256 * 1024;
+
+/// Chromium refuses a profile that is already locked. Every browser-backed
+/// process holds the single slot token from spawn until it has been reaped, so
+/// a status check can never overlap a download (or another status check).
+/// A channel-backed token is used because `MutexGuard` is not `Send` and the
+/// guard must live in the process's waiter thread.
+pub struct BrowserSlot(Sender<()>);
+
+impl Drop for BrowserSlot {
+    fn drop(&mut self) {
+        let _ = self.0.send(());
+    }
+}
+
+static BROWSER_SLOTS: LazyLock<(Sender<()>, Mutex<Receiver<()>>)> = LazyLock::new(|| {
+    let (tx, rx) = channel();
+    tx.send(()).expect("browser slot init");
+    (tx, Mutex::new(rx))
+});
+
+/// Acquires the single browser slot. Drop the guard to release it.
+pub fn browser_slot() -> BrowserSlot {
+    let (tx, rx) = &*BROWSER_SLOTS;
+    let _ = rx.lock().unwrap_or_else(|error| error.into_inner()).recv();
+    BrowserSlot(tx.clone())
+}
 
 #[derive(Debug, PartialEq)]
 pub enum JobEvent {
@@ -90,6 +116,8 @@ pub struct Spec {
     pub args: Vec<String>,
     pub env: Vec<(String, String)>,
     pub cwd: PathBuf,
+    /// Uses the shared browser profile; serialized against other browser processes.
+    pub browser: bool,
 }
 
 /// Starts the process; every stdout/stderr line and finally the exit arrive through `send`.
@@ -105,6 +133,9 @@ pub fn spawn_into(handle: JobHandle, spec: Spec, send: Arc<dyn Fn(JobEvent) + Se
         send(JobEvent::Exit(Ok(-1)));
         return Ok(());
     }
+    // Block here rather than in the waiter: a second browser must not even
+    // start until the first one has been reaped.
+    let browser_slot = spec.browser.then(browser_slot);
     std::fs::create_dir_all(&spec.cwd).map_err(|e| e.to_string())?;
     let mut command = Command::new(&spec.program);
     command
@@ -177,6 +208,9 @@ pub fn spawn_into(handle: JobHandle, spec: Spec, send: Arc<dyn Fn(JobEvent) + Se
     }
     let waiter = handle;
     thread::spawn(move || {
+        // Held until after the exit event: a successor must not overlap this
+        // process or inherit a still-locked Chromium profile.
+        let _browser_slot = browser_slot;
         // Reap the direct child without hiding it from `cancel()`. Joining the
         // readers first used to block forever when a browser descendant held
         // the pipes open; `try_wait` polls while the handle stays cancellable.
@@ -431,6 +465,7 @@ mod tests {
                 args: vec!["/C".into(), "echo hello".into()],
                 env: Vec::new(),
                 cwd: dir.path().to_path_buf(),
+                browser: false,
             }
         } else {
             Spec {
@@ -438,6 +473,7 @@ mod tests {
                 args: vec!["-c".into(), "echo hello".into()],
                 env: Vec::new(),
                 cwd: dir.path().to_path_buf(),
+                browser: false,
             }
         };
         let _handle = spawn(spec, Arc::new(move |e| { let _ = tx.send(e); })).unwrap();
@@ -463,6 +499,7 @@ mod tests {
                 args: vec!["/C".into(), "ping -n 30 127.0.0.1 >nul".into()],
                 env: Vec::new(),
                 cwd: dir.path().to_path_buf(),
+                browser: false,
             }
         } else {
             Spec {
@@ -470,6 +507,7 @@ mod tests {
                 args: vec!["-c".into(), "sleep 30".into()],
                 env: Vec::new(),
                 cwd: dir.path().to_path_buf(),
+                browser: false,
             }
         };
         let handle = spawn(spec, Arc::new(move |e| { let _ = tx.send(e); })).unwrap();
@@ -497,6 +535,7 @@ mod tests {
             args: vec!["-c".into(), "sleep 3 & exit 7".into()],
             env: Vec::new(),
             cwd: dir.path().to_path_buf(),
+            browser: false,
         };
         let started = Instant::now();
         let _handle = spawn(spec, Arc::new(move |e| { let _ = tx.send(e); })).unwrap();
@@ -509,5 +548,41 @@ mod tests {
         }
         assert!(started.elapsed() < Duration::from_secs(2), "exit must not wait for inherited pipes");
         assert_eq!(result, Some(Ok(7)));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn browser_processes_share_one_slot() {
+        let dir = tempfile::tempdir().unwrap();
+        let (tx, rx) = channel();
+        let send = Arc::new(move |e| { let _ = tx.send(e); });
+        let spec = |script: &str| Spec {
+            program: PathBuf::from("sh"),
+            args: vec!["-c".into(), script.into()],
+            env: Vec::new(),
+            cwd: dir.path().to_path_buf(),
+            browser: true,
+        };
+        spawn(spec("echo first; sleep 1"), send.clone()).unwrap();
+        let mut saw_first = false;
+        while let Ok(event) = rx.recv_timeout(Duration::from_secs(5)) {
+            if matches!(event, JobEvent::Line(line) if line == "first") {
+                saw_first = true;
+                break;
+            }
+        }
+        assert!(saw_first);
+
+        let started = Instant::now();
+        spawn(spec("echo second"), send).unwrap();
+        let mut waited = None;
+        while let Ok(event) = rx.recv_timeout(Duration::from_secs(5)) {
+            if matches!(event, JobEvent::Line(line) if line == "second") {
+                waited = Some(started.elapsed());
+                break;
+            }
+        }
+        let waited = waited.expect("second browser process must start");
+        assert!(waited >= Duration::from_millis(500), "second browser overlapped the first: {waited:?}");
     }
 }

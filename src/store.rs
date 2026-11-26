@@ -432,6 +432,7 @@ fn check_services(paths: &Paths, installed: &Installed) -> Result<Vec<String>, S
         args: extensions::status_args(manifest, &fill),
         env: extensions::command_env(manifest, &fill),
         cwd: data,
+        browser: manifest.browser,
     };
     let (send, events) = channel();
     let handle = runner::spawn(spec, Arc::new(move |event| { let _ = send.send(event); }))?;

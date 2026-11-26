@@ -410,6 +410,7 @@ impl App {
                 args: extensions::command_args(&manifest, &fill, &picks),
                 env,
                 cwd: data,
+                browser: manifest.browser,
             };
             let event_send = Arc::new(move |event| msg_send(Msg::Job(job_id, event)));
             if let Err(error) = runner::spawn_into(handle, spec, event_send.clone()) {

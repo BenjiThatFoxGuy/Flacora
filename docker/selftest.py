@@ -283,11 +283,11 @@ def run(image):
         before = len(get_json(state_url)[1]["jobs"])
         post_json(f"{base}/api/catalog/submit", {"input": "synthetic"})
 
-        def catalog_listed():
+        def album_listed():
             catalog = get_json(state_url)[1]["catalog"]
             return len(catalog.get("items", [])) >= 2 and True
 
-        if not wait_for("catalog lists album items", catalog_listed):
+        if not wait_for("catalog lists album items", album_listed):
             return False
 
         post_json(f"{base}/api/catalog/expand", {})

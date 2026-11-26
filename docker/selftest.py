@@ -288,18 +288,13 @@ def run(image):
         if not wait_for("catalog tracks queue for download", catalog_queued):
             return False
 
-        # "All tracks" expansion test
+        # "All tracks" expansion test. Reuse the search page already loaded:
+        # re-submitting races the expand command with a pending catalog process.
         before = len(get_json(state_url)[1]["jobs"])
-        post_json(f"{base}/api/catalog/submit", {"input": "synthetic"})
-
-        def album_listed():
-            catalog = get_json(state_url)[1]["catalog"]
-            return len(catalog.get("items", [])) >= 2 and True
-
-        if not wait_for("catalog lists album items", album_listed):
+        items = get_json(state_url)[1]["catalog"]["items"]
+        if not any(item["kind"].lower() == "album" for item in items):
+            print("FAIL: catalog page has no albums to expand")
             return False
-
-        wait_for("catalog search settles", lambda: not get_json(state_url)[1]["catalog"]["busy"])
 
         post_json(f"{base}/api/catalog/expand", {})
 

@@ -30,7 +30,7 @@ RUN RUSTFLAGS="" cargo build --release -p flacora-server
 FROM debian:bookworm-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates ffmpeg gosu \
+    ca-certificates curl ffmpeg gosu \
     libasound2 libatk-bridge2.0-0 libatk1.0-0 libatspi2.0-0 \
     libcairo2 libcups2 libdbus-1-3 libdrm2 libgbm1 libglib2.0-0 \
     libnspr4 libnss3 libpango-1.0-0 libx11-6 libxcb1 libxcomposite1 \
@@ -50,6 +50,9 @@ ENV FLACORA_HOME=/config \
 
 EXPOSE 8080
 VOLUME ["/config", "/output"]
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD curl -fsS --max-time 4 "http://127.0.0.1:${FLACORA_PORT}/api/version" || exit 1
 
 ENTRYPOINT ["/entrypoint.sh"]
 CMD ["flacora-server"]

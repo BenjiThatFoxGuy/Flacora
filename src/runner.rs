@@ -211,6 +211,8 @@ pub fn spawn_into(handle: JobHandle, spec: Spec, send: Arc<dyn Fn(JobEvent) + Se
         // Held until after the exit event: a successor must not overlap this
         // process or inherit a still-locked Chromium profile.
         let _browser_slot = browser_slot;
+        #[cfg(unix)]
+        let mut orphan_pgid = None;
         // Reap the direct child without hiding it from `cancel()`. Joining the
         // readers first used to block forever when a browser descendant held
         // the pipes open; `try_wait` polls while the handle stays cancellable.
@@ -229,7 +231,9 @@ pub fn spawn_into(handle: JobHandle, spec: Spec, send: Arc<dyn Fn(JobEvent) + Se
                     #[cfg(windows)]
                     let _ = state.job.take();
                     #[cfg(unix)]
-                    let _ = state.pgid.take();
+                    {
+                        orphan_pgid = state.pgid.take();
+                    }
                     break result;
                 }
                 Ok(None) => {
@@ -242,11 +246,24 @@ pub fn spawn_into(handle: JobHandle, spec: Spec, send: Arc<dyn Fn(JobEvent) + Se
                     #[cfg(windows)]
                     let _ = state.job.take();
                     #[cfg(unix)]
-                    let _ = state.pgid.take();
+                    {
+                        orphan_pgid = state.pgid.take();
+                    }
                     break result;
                 }
             }
         };
+        // The extension's process group may still hold Chromium children after
+        // the parent exits. Clear them before releasing the browser slot.
+        #[cfg(unix)]
+        if let Some(pgid) = orphan_pgid {
+            let _ = Command::new("kill")
+                .args(["-KILL", &format!("-{pgid}")])
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status();
+        }
         // Collect trailing lines briefly. A surviving grandchild may still hold
         // a pipe open, so stop after the grace period and detach those readers.
         let deadline = Instant::now() + DRAIN_GRACE;

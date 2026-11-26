@@ -299,6 +299,8 @@ def run(image):
         if not wait_for("catalog lists album items", album_listed):
             return False
 
+        wait_for("catalog search settles", lambda: not get_json(state_url)[1]["catalog"]["busy"])
+
         post_json(f"{base}/api/catalog/expand", {})
 
         def catalog_expanded():
@@ -306,6 +308,11 @@ def run(image):
             return len(jobs) >= before + 6 and True
 
         if not wait_for("all tracks queued from expansion", catalog_expanded):
+            state = get_json(state_url)[1]
+            catalog = state["catalog"]
+            print(f"  expansion: busy={catalog.get('busy')} expanding={catalog.get('expanding')} "
+                  f"status={catalog.get('expand_status')} error={catalog.get('error')}")
+            print(f"  jobs now: {len(state.get('jobs') or [])} (before {before})")
             return False
 
         print("PASS: end-to-end container check")

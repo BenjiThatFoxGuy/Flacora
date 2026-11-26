@@ -45,9 +45,14 @@ impl Paths {
         self.extensions().join(id)
     }
 
+    /// Root of all per-extension data folders.
+    pub fn data_root(&self) -> PathBuf {
+        self.root.join("data")
+    }
+
     /// Per-extension working data (sessions, browser profiles), kept across updates.
     pub fn data(&self, id: &str) -> PathBuf {
-        self.root.join("data").join(id)
+        self.data_root().join(id)
     }
 
     /// CloakBrowser install shared by every extension that needs it.
@@ -469,6 +474,46 @@ fn installed_browser(root: &Path) -> Option<String> {
         }
         Some(version.to_owned())
     })
+}
+
+/// Removes browser state left behind by a killed process. Called once at
+/// startup, before any extension can launch Chromium. `Singleton*` locks point
+/// at a dead PID after SIGKILL and make the next launch exit with
+/// profile-in-use; interrupted downloads leave large `chromium-*.tmp` folders.
+/// Nothing in this process is using the profile when it runs.
+pub fn sweep_browser_state(paths: &Paths) -> usize {
+    let mut removed = 0;
+    let browser = paths.browser();
+    if let Ok(entries) = fs::read_dir(&browser) {
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            if name.to_string_lossy().ends_with(".tmp") && entry.path().is_dir() {
+                if fs::remove_dir_all(entry.path()).is_ok() {
+                    removed += 1;
+                }
+            }
+        }
+    }
+    for root in [browser, paths.data_root()] {
+        let mut pending = vec![(root, 0usize)];
+        while let Some((dir, depth)) = pending.pop() {
+            let Ok(entries) = fs::read_dir(dir) else { continue };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                let name = entry.file_name();
+                if name.to_string_lossy().starts_with("Singleton") && path.is_file() {
+                    if fs::remove_file(&path).is_ok() {
+                        removed += 1;
+                    }
+                    continue;
+                }
+                if depth < 8 && path.is_dir() {
+                    pending.push((path, depth + 1));
+                }
+            }
+        }
+    }
+    removed
 }
 
 /// Every extension folder with a valid `extension.json`, sorted by name.

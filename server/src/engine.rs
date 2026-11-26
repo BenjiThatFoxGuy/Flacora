@@ -295,6 +295,10 @@ pub struct ServiceDto {
 // ---------------------------------------------------------------------- engine
 
 pub fn run(cmd_rx: Receiver<Command>, state_tx: Sender<State>) {
+    // Clear locks and partial installs from a previous, killed process before
+    // anything can launch Chromium. This must run before `App::connect`.
+    flacora::store::sweep_browser_state(&flacora::store::Paths::detect());
+
     let wake = Arc::new(AtomicBool::new(false));
     let waker: Waker = Arc::new(move || {
         wake.store(true, Ordering::SeqCst);

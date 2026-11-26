@@ -246,3 +246,28 @@ fn packages_with_symlinks_or_excessive_size_are_rejected() {
     let error = unpack_with_limits(&many_pkg, &paths.root.join("out2"), 3, 1024).unwrap_err();
     assert!(error.contains("too many files"), "{error}");
 }
+
+#[test]
+fn sweep_removes_stale_browser_locks_and_temp_installs() {
+    let dir = tempfile::tempdir().unwrap();
+    let paths = Paths { root: dir.path().to_path_buf() };
+    let profile = paths.data("lucida").join("profile");
+    fs::create_dir_all(&profile).unwrap();
+    fs::write(profile.join("SingletonLock"), "host-123").unwrap();
+    fs::write(profile.join("SingletonCookie"), "abc").unwrap();
+    fs::write(profile.join("keep.txt"), "keep").unwrap();
+    let partial = paths.browser().join("chromium-123.4.tmp");
+    fs::create_dir_all(&partial).unwrap();
+    fs::write(partial.join("chrome"), "partial").unwrap();
+    let installed = paths.browser().join("chromium-123.4");
+    fs::create_dir_all(&installed).unwrap();
+    fs::write(installed.join("chrome"), "real").unwrap();
+
+    assert_eq!(sweep_browser_state(&paths), 3);
+    assert!(!profile.join("SingletonLock").exists());
+    assert!(!profile.join("SingletonCookie").exists());
+    assert!(profile.join("keep.txt").exists());
+    assert!(!partial.exists(), "interrupted browser downloads must be swept");
+    assert!(installed.join("chrome").exists(), "a completed browser install stays");
+    assert_eq!(sweep_browser_state(&paths), 0, "the sweep is idempotent");
+}

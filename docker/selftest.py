@@ -25,6 +25,7 @@ HOST = "127.0.0.1"
 SERVICE = "example.test"
 EXT_ID = "synthetic-dl"
 CATALOG_ID = "synthetic-catalog"
+BASE = {"url": ""}
 
 MANIFEST = {
     "id": EXT_ID,
@@ -159,6 +160,7 @@ def run(image):
     port = free_port()
     name = "flacora-selftest"
     base = f"http://{HOST}:{port}"
+    BASE["url"] = base
 
     subprocess.run(["docker", "rm", "-f", name], capture_output=True, check=False)
     subprocess.run(
@@ -277,32 +279,28 @@ def run(image):
         if not wait_for("catalog tracks queue for download", catalog_queued):
             return False
 
+        # "All tracks" expansion test
+        before = len(get_json(state_url)[1]["jobs"])
+        post_json(f"{base}/api/catalog/submit", {"input": "synthetic"})
+
+        def catalog_listed():
+            catalog = get_json(state_url)[1]["catalog"]
+            return len(catalog.get("items", [])) >= 2 and True
+
+        if not wait_for("catalog lists album items", catalog_listed):
+            return False
+
+        post_json(f"{base}/api/catalog/expand", {})
+
+        def catalog_expanded():
+            jobs = get_json(state_url)[1].get("jobs") or []
+            return len(jobs) >= before + 6 and True
+
+        if not wait_for("all tracks queued from expansion", catalog_expanded):
+            return False
+
         print("PASS: end-to-end container check")
         return True
-
-    # "All tracks" expansion test
-    before = len(get_json(state_url)[1]["jobs"])
-    # Submit catalog query that returns album items
-    post_json(f"{base}/api/catalog/submit", {{"input": "synthetic"}})
-    def catalog_listed():
-        catalog = get_json(state_url)[1]["catalog"]
-        # Check that we have album items (not just tracks)
-        return len(catalog.get("items", [])) >= 2 and True
-    if not wait_for("catalog lists album items", catalog_listed):
-        return False
-
-    # Trigger "Download All Tracks" expansion
-    post_json(f"{base}/api/catalog/expand", {{}})
-    def catalog_expanded():
-        state = get_json(state_url)[1]
-        catalog = state.get("catalog") or {{}}
-        jobs = state.get("jobs") or []
-        # After expansion, all tracks from albums should be queued
-        # We had 2 tracks from initial search, now should have more from expansion
-        return len(jobs) >= before + 6 and True  # 6 tracks from 2 albums
-    if not wait_for("all tracks queued from expansion", catalog_expanded):
-        return False
-
     finally:
         subprocess.run(["docker", "rm", "-f", name], capture_output=True, check=False)
         shutil.rmtree(root, ignore_errors=True)
